@@ -596,15 +596,218 @@ class AudioAlignProcessor:
         """验证缓存是否有效（已移除缓存功能）"""
         return False
 
+    def generate_aligned_srt(self, 
+                           aligned_results_path: str, 
+                           original_srt_path: str, 
+                           output_srt_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        根据对齐结果生成新的SRT字幕文件
+        
+        Args:
+            aligned_results_path: 对齐结果JSON文件路径
+            original_srt_path: 原始SRT字幕文件路径
+            output_srt_path: 输出SRT文件路径（可选）
+            
+        Returns:
+            Dict[str, Any]: 处理结果
+        """
+        try:
+            self.logger.info(f"开始生成对齐后的SRT字幕: {aligned_results_path}")
+            
+            # 加载对齐结果
+            if not os.path.exists(aligned_results_path):
+                return {'success': False, 'error': f'对齐结果文件不存在: {aligned_results_path}'}
+            
+            with open(aligned_results_path, 'r', encoding='utf-8') as f:
+                aligned_results = json.load(f)
+            
+            if not aligned_results.get('success', False):
+                return {'success': False, 'error': '对齐结果显示处理失败'}
+            
+            # 加载原始SRT字幕
+            original_subtitles = self._parse_srt_subtitles(original_srt_path)
+            if not original_subtitles:
+                return {'success': False, 'error': '原始SRT字幕解析失败'}
+            
+            # 获取对齐后的音频片段
+            aligned_segments = aligned_results.get('aligned_audio_segments', [])
+            
+            # 提取TTS片段（非静音片段）
+            tts_segments = [seg for seg in aligned_segments if not seg.get('is_silence', False)]
+            
+            # 生成默认输出路径
+            if output_srt_path is None:
+                output_srt_path = self._generate_default_srt_path(aligned_results_path)
+            
+            # 确保输出目录存在
+            output_dir = Path(output_srt_path).parent
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 生成新的SRT内容
+            srt_content = self._generate_srt_content(tts_segments, original_subtitles)
+            
+            # 保存SRT文件
+            with open(output_srt_path, 'w', encoding='utf-8') as f:
+                f.write(srt_content)
+            
+            result = {
+                'success': True,
+                'output_srt_path': output_srt_path,
+                'subtitle_count': len(tts_segments),
+                'total_duration': aligned_results.get('total_duration', 0),
+                'processing_info': {
+                    'aligned_results_path': aligned_results_path,
+                    'original_srt_path': original_srt_path,
+                    'processed_at': datetime.now().isoformat()
+                }
+            }
+            
+            self.logger.info(f"对齐SRT字幕生成完成: {output_srt_path}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"生成对齐SRT字幕失败: {str(e)}")
+            return {'success': False, 'error': str(e)}
+    
+    def _generate_default_srt_path(self, aligned_results_path: str) -> str:
+        """生成默认的SRT输出路径"""
+        try:
+            aligned_path = Path(aligned_results_path)
+            
+            if "aligned_audio" in aligned_path.parts:
+                aligned_index = aligned_path.parts.index("aligned_audio")
+                output_parts = list(aligned_path.parts[:aligned_index]) + ["aligned_subtitles"] + [
+                    f"{aligned_path.stem.replace('_results', '')}_aligned.srt"]
+                output_path = Path(*output_parts)
+            else:
+                output_path = aligned_path.parent / f"{aligned_path.stem}_aligned.srt"
+            
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            return str(output_path)
+            
+        except Exception as e:
+            self.logger.error(f"默认SRT路径生成失败: {str(e)}")
+            return "aligned_subtitles.srt"
+    
+    def _generate_srt_content(self, tts_segments: List[Dict[str, Any]], 
+                            original_subtitles: List[SubtitleEntry]) -> str:
+        """生成SRT文件内容"""
+        try:
+            srt_lines = []
+            
+            # 确保字幕数量匹配
+            subtitle_count = min(len(tts_segments), len(original_subtitles))
+            
+            for i in range(subtitle_count):
+                tts_segment = tts_segments[i]
+                original_subtitle = original_subtitles[i]
+                
+                # 获取对齐后的时间戳
+                start_time = tts_segment.get('start_time', 0.0)
+                end_time = tts_segment.get('end_time', 0.0)
+                
+                # 格式化时间戳
+                start_time_str = self._seconds_to_srt_time(start_time)
+                end_time_str = self._seconds_to_srt_time(end_time)
+                
+                # 使用原始字幕文本
+                subtitle_text = original_subtitle.text
+                
+                # 构建SRT条目
+                srt_lines.append(str(i + 1))  # 序号
+                srt_lines.append(f"{start_time_str} --> {end_time_str}")  # 时间戳
+                srt_lines.append(subtitle_text)  # 文本
+                srt_lines.append("")  # 空行
+            
+            return '\n'.join(srt_lines)
+            
+        except Exception as e:
+            self.logger.error(f"SRT内容生成失败: {str(e)}")
+            raise
+    
+    def _seconds_to_srt_time(self, seconds: float) -> str:
+        """将秒数转换为SRT时间格式"""
+        try:
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            milliseconds = int((seconds % 1) * 1000)
+            
+            return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
+            
+        except Exception as e:
+            self.logger.error(f"时间格式转换失败: {seconds}")
+            return "00:00:00,000"
+
+
+# 全局单例实例
+_processor_instance = None
+
+def _get_processor() -> AudioAlignProcessor:
+    """获取AudioAlignProcessor单例实例"""
+    global _processor_instance
+    if _processor_instance is None:
+        _processor_instance = AudioAlignProcessor()
+    return _processor_instance
+
 
 def align_audio_with_subtitles(tts_results_path: str,
                                srt_path: str,
-                               output_path: Optional[str] = None,
-                               sample_rate: int = 22050) -> Dict[str, Any]:
-    """根据TTS结果和SRT字幕生成对齐的音频文件"""
-    processor = AudioAlignProcessor(sample_rate=sample_rate)
+                               output_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    根据TTS结果和SRT字幕生成对齐的音频文件
+    
+    Args:
+        tts_results_path: TTS生成结果JSON文件路径
+        srt_path: 原始SRT字幕文件路径
+        output_path: 输出音频文件路径（可选）
+        
+    Returns:
+        Dict[str, Any]: 处理结果
+        
+    Example:
+        >>> result = align_audio_with_subtitles(
+        ...     tts_results_path="output/tts_output/tts_generation_results.json",
+        ...     srt_path="output/srt.srt",
+        ...     output_path="output/aligned_audio/aligned_audio.wav"
+        ... )
+        >>> if result['success']:
+        ...     print(f"对齐音频已生成: {result['output_path']}")
+    """
+    processor = _get_processor()
     return processor.align_audio_with_subtitles(
         tts_results_path=tts_results_path,
         srt_path=srt_path,
         output_path=output_path
+    )
+
+
+def generate_aligned_srt(aligned_results_path: str,
+                        original_srt_path: str,
+                        output_srt_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    根据对齐结果生成新的SRT字幕文件
+    
+    Args:
+        aligned_results_path: 对齐结果JSON文件路径
+        original_srt_path: 原始SRT字幕文件路径
+        output_srt_path: 输出SRT文件路径（可选）
+        
+    Returns:
+        Dict[str, Any]: 处理结果
+        
+    Example:
+        >>> result = generate_aligned_srt(
+        ...     aligned_results_path="output/aligned_audio/aligned_tts_generation_results_results.json",
+        ...     original_srt_path="output/srt.srt",
+        ...     output_srt_path="output/aligned_subtitles/aligned_subtitle.srt"
+        ... )
+        >>> if result['success']:
+        ...     print(f"新字幕文件已生成: {result['output_srt_path']}")
+    """
+    processor = _get_processor()
+    return processor.generate_aligned_srt(
+        aligned_results_path=aligned_results_path,
+        original_srt_path=original_srt_path,
+        output_srt_path=output_srt_path
     )
