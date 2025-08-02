@@ -309,8 +309,8 @@ class SubtitlePreprocessor:
         return f"{time_obj.hour:02d}:{time_obj.minute:02d}:{time_obj.second:02d},{time_obj.microsecond // 1000:03d}"
 
     def clear_cache(self):
-        """清理文本处理器缓存"""
-        self.text_processor.clear_cache()
+        """清理文本处理器缓存（已移除缓存功能）"""
+        pass
 
     def get_processing_statistics(self) -> Dict[str, Any]:
         """获取处理统计信息"""

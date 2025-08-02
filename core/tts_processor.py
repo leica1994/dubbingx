@@ -10,7 +10,6 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional
 import datetime
-import re
 import shutil
 
 import numpy as np
@@ -179,7 +178,7 @@ class TTSProcessor:
                 duration = reference_segment.get('duration', 0)
                 if duration > 0:
                     silence_result = self._generate_silence_audio(str(tts_path), duration)
-                    
+
                     if silence_result and silence_result.get('success'):
                         return {
                             'index': index,
@@ -191,7 +190,7 @@ class TTSProcessor:
                             'tts_generated': True,
                             'silence_generated': True
                         }
-                
+
                 # 如果生成失败，返回无音频的结果
                 return {
                     'index': index,

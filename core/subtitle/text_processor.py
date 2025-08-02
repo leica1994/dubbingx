@@ -7,23 +7,18 @@
 1. 基础清理 - 移除问题字符和边界情况处理
 2. 深度标准化 - 术语替换和多语言规范化  
 3. 智能分割 - 多种分割策略自适应选择
-4. 缓存管理 - 高效的结果缓存和管理
-5. 语言检测 - 智能多语言识别
-6. 批量处理 - 支持大规模文本处理
+4. 语言检测 - 智能多语言识别
+5. 批量处理 - 支持大规模文本处理
 
 特性:
 - 高性能的正则表达式优化
 - 灵活的分割策略选择
-- 完善的缓存机制
 - 详细的处理统计信息
 - 支持自定义配置和扩展
 """
 
-import json
-import pickle
 import time
 import re
-import hashlib
 import logging
 from typing import Dict, List, Tuple, Optional, Union, Callable, Any
 from enum import Enum
@@ -53,25 +48,6 @@ class LanguageType(Enum):
     UNKNOWN = "unknown"
 
 
-@dataclass
-class CacheStatistics:
-    """缓存统计信息"""
-    total_requests: int = 0
-    cache_hits: int = 0
-    cache_misses: int = 0
-    cache_size: int = 0
-    last_cleanup: float = 0.0
-    
-    @property
-    def hit_rate(self) -> float:
-        """缓存命中率"""
-        if self.total_requests == 0:
-            return 0.0
-        return self.cache_hits / self.total_requests
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
-        return asdict(self)
 
 
 @dataclass
@@ -85,20 +61,13 @@ class TextProcessingResult:
     metadata: Dict[str, Any]             # 元数据信息
     is_valid: bool                       # 是否有效
     processing_time: float = 0.0         # 处理耗时（秒）
-    from_cache: bool = False             # 是否来自缓存
     error_message: Optional[str] = None  # 错误信息
     
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典（用于缓存序列化）"""
+        """转换为字典"""
         result = asdict(self)
         result['language'] = self.language.value
         return result
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'TextProcessingResult':
-        """从字典创建实例（用于缓存反序列化）"""
-        data['language'] = LanguageType(data['language'])
-        return cls(**data)
 
 
 class IntelligentTextProcessor:
@@ -131,30 +100,11 @@ class IntelligentTextProcessor:
     
     def __init__(self, 
                  max_text_length: int = 200,
-                 default_split_strategy: SplitStrategy = SplitStrategy.ADAPTIVE,
-                 enable_cache: bool = True,
-                 cache_dir: Optional[str] = None,
-                 cache_format: str = "json",
-                 cache_expire_hours: float = 24.0,
-                 max_cache_size: int = 1000):
+                 default_split_strategy: SplitStrategy = SplitStrategy.ADAPTIVE):
         """初始化智能文本处理器"""
         # 基础配置
         self.max_text_length = max_text_length
         self.default_split_strategy = default_split_strategy
-        self.enable_cache = enable_cache
-        self.cache_format = cache_format.lower()
-        self.cache_expire_hours = cache_expire_hours
-        self.max_cache_size = max_cache_size
-        
-        # 缓存配置
-        self.cache_dir = Path(cache_dir) if cache_dir else Path("outputs/temp/cache/text_processing")
-        self.cache_stats = CacheStatistics()
-        self._memory_cache: Dict[str, Tuple[TextProcessingResult, float]] = {}
-        
-        # 创建缓存目录
-        if self.enable_cache:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            self._load_cache_statistics()
         
         # 编译正则表达式模式
         self._compile_regex_patterns()
@@ -195,36 +145,6 @@ class IntelligentTextProcessor:
         # 英文缩写模式
         self.contractions_pattern = re.compile(r"\b(don't|won't|can't|n't|'re|'ve|'ll|'d|'m)\b", re.IGNORECASE)
     
-    def _load_cache_statistics(self):
-        """加载缓存统计信息"""
-        if not self.enable_cache:
-            return
-            
-        stats_file = self.cache_dir / "cache_stats.json"
-        try:
-            if stats_file.exists():
-                with open(stats_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                self.cache_stats = CacheStatistics(**data)
-        except Exception as e:
-            self.logger.warning(f"加载缓存统计失败: {str(e)}")
-            self.cache_stats = CacheStatistics()
-    
-    def _save_cache_statistics(self):
-        """保存缓存统计信息"""
-        if not self.enable_cache:
-            return
-            
-        stats_file = self.cache_dir / "cache_stats.json"
-        try:
-            with open(stats_file, 'w', encoding='utf-8') as f:
-                json.dump(self.cache_stats.to_dict(), f, indent=2)
-        except Exception as e:
-            self.logger.warning(f"保存缓存统计失败: {str(e)}")
-    
-    def _generate_text_hash(self, text: str) -> str:
-        """生成文本哈希用于缓存"""
-        return hashlib.md5(text.encode('utf-8')).hexdigest()
     
     def clean_text_for_tts(self, text: str) -> str:
         """简化的文本清理接口（兼容现有代码）"""
@@ -238,10 +158,6 @@ class IntelligentTextProcessor:
         if len(text) > self.max_text_length * 10:
             return False, f"文本过长: {len(text)} 字符"
         return True, None
-    
-    def get_text_hash(self, text: str) -> str:
-        """获取文本哈希（外部接口）"""
-        return self._generate_text_hash(text)
 
     def process(self, text: str,
                 split_strategy: Optional[SplitStrategy] = None,
@@ -281,47 +197,35 @@ class IntelligentTextProcessor:
                     error_message="文本为空"
                 )
 
-            # 2. 生成文本哈希
-            report_progress("生成哈希", 0.2)
-            text_hash = self._generate_text_hash(text)
-
-            # 3. 检查缓存
-            report_progress("检查缓存", 0.3)
-            if self.enable_cache:
-                cached_result = self._get_cached_result(text_hash)
-                if cached_result:
-                    cached_result.processing_time = time.time() - start_time
-                    return cached_result
-
-            # 4. 语言检测
-            report_progress("检测语言", 0.4)
+            # 2. 语言检测
+            report_progress("检测语言", 0.2)
             detected_language = target_language or self._detect_language(text)
 
-            # 5. 基础清理
-            report_progress("基础清理", 0.5)
+            # 3. 基础清理
+            report_progress("基础清理", 0.3)
             cleaned_text = self._basic_cleaning(text)
 
-            # 6. 深度标准化
-            report_progress("深度标准化", 0.7)
+            # 4. 深度标准化
+            report_progress("深度标准化", 0.5)
             normalized_text = self._deep_normalization(cleaned_text, detected_language)
 
-            # 7. 智能分割
-            report_progress("智能分割", 0.8)
+            # 5. 智能分割
+            report_progress("智能分割", 0.7)
             split_strategy = split_strategy or self.default_split_strategy
             segments = self._intelligent_split(normalized_text, split_strategy, detected_language)
 
-            # 8. 验证结果
-            report_progress("验证结果", 0.9)
+            # 6. 验证结果
+            report_progress("验证结果", 0.8)
             is_valid, error_msg = self._validate_result(normalized_text, segments)
 
-            # 9. 构建结果
+            # 7. 构建结果
             processing_time = time.time() - start_time
             result = TextProcessingResult(
                 original_text=text,
                 cleaned_text=normalized_text,
                 segments=segments,
                 language=detected_language,
-                text_hash=text_hash,
+                text_hash="",
                 metadata={
                     'original_length': len(text),
                     'cleaned_length': len(normalized_text),
@@ -333,11 +237,6 @@ class IntelligentTextProcessor:
                 processing_time=processing_time,
                 error_message=error_msg
             )
-
-            # 10. 缓存结果
-            report_progress("缓存结果", 1.0)
-            if self.enable_cache and is_valid:
-                self._cache_result(text_hash, result)
 
             # 更新统计信息
             self._processing_stats['total_processed'] += 1
@@ -355,7 +254,7 @@ class IntelligentTextProcessor:
                 cleaned_text="",
                 segments=[],
                 language=LanguageType.UNKNOWN,
-                text_hash=self._generate_text_hash(text) if text else "",
+                text_hash="",
                 metadata={'error_type': type(e).__name__},
                 is_valid=False,
                 processing_time=processing_time,
@@ -1004,156 +903,6 @@ class IntelligentTextProcessor:
 
         return True, None
 
-    def _get_cached_result(self, text_hash: str) -> Optional[TextProcessingResult]:
-        """获取缓存的处理结果"""
-        if not self.enable_cache:
-            return None
-
-        self.cache_stats.total_requests += 1
-
-        try:
-            # 检查内存缓存
-            if text_hash in self._memory_cache:
-                cached_result, timestamp = self._memory_cache[text_hash]
-                if self._is_cache_valid(timestamp):
-                    self.cache_stats.cache_hits += 1
-                    cached_result.from_cache = True
-                    return cached_result
-                else:
-                    del self._memory_cache[text_hash]
-
-            # 检查磁盘缓存
-            cache_file = self._get_cache_file_path(text_hash)
-            if cache_file.exists():
-                file_time = cache_file.stat().st_mtime
-                if self._is_cache_valid(file_time):
-                    cached_result = self._load_cache_file(cache_file)
-                    if cached_result:
-                        self._memory_cache[text_hash] = (cached_result, file_time)
-                        self.cache_stats.cache_hits += 1
-                        cached_result.from_cache = True
-                        return cached_result
-                else:
-                    cache_file.unlink(missing_ok=True)
-
-            self.cache_stats.cache_misses += 1
-            return None
-
-        except Exception as e:
-            self.logger.warning(f"读取缓存失败 {text_hash}: {str(e)}")
-            self.cache_stats.cache_misses += 1
-            return None
-
-    def _cache_result(self, text_hash: str, result: TextProcessingResult):
-        """缓存处理结果"""
-        if not self.enable_cache:
-            return
-
-        try:
-            current_time = time.time()
-
-            # 添加到内存缓存
-            self._memory_cache[text_hash] = (result, current_time)
-
-            # 写入磁盘缓存
-            cache_file = self._get_cache_file_path(text_hash)
-            self._save_cache_file(cache_file, result)
-
-            # 更新统计信息
-            self.cache_stats.cache_size = len(self._memory_cache)
-
-            # 检查缓存大小限制
-            if len(self._memory_cache) > self.max_cache_size:
-                self._cleanup_memory_cache()
-
-        except Exception as e:
-            self.logger.warning(f"写入缓存失败 {text_hash}: {str(e)}")
-
-    def _get_cache_file_path(self, text_hash: str) -> Path:
-        """获取缓存文件路径"""
-        extension = "json" if self.cache_format == "json" else "pkl"
-        return self.cache_dir / f"{text_hash}.{extension}"
-
-    def _is_cache_valid(self, timestamp: float) -> bool:
-        """检查缓存是否有效"""
-        if self.cache_expire_hours <= 0:
-            return True
-        expire_time = self.cache_expire_hours * 3600
-        return (time.time() - timestamp) < expire_time
-
-    def _load_cache_file(self, cache_file: Path) -> Optional[TextProcessingResult]:
-        """从文件加载缓存结果"""
-        try:
-            if self.cache_format == "json":
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                return TextProcessingResult.from_dict(data)
-            else:
-                with open(cache_file, 'rb') as f:
-                    return pickle.load(f)
-        except Exception as e:
-            self.logger.warning(f"加载缓存文件失败 {cache_file}: {str(e)}")
-            return None
-
-    def _save_cache_file(self, cache_file: Path, result: TextProcessingResult):
-        """保存结果到缓存文件"""
-        try:
-            if self.cache_format == "json":
-                with open(cache_file, 'w', encoding='utf-8') as f:
-                    json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
-            else:
-                with open(cache_file, 'wb') as f:
-                    pickle.dump(result, f)
-        except Exception as e:
-            self.logger.warning(f"保存缓存文件失败 {cache_file}: {str(e)}")
-
-    def _cleanup_memory_cache(self):
-        """清理内存缓存"""
-        if len(self._memory_cache) <= self.max_cache_size:
-            return
-
-        # 按时间戳排序，保留最新的条目
-        sorted_items = sorted(
-            self._memory_cache.items(),
-            key=lambda x: x[1][1]
-        )
-
-        keep_count = int(self.max_cache_size * 0.8)
-        items_to_keep = sorted_items[-keep_count:]
-
-        self._memory_cache.clear()
-        for text_hash, (result, timestamp) in items_to_keep:
-            self._memory_cache[text_hash] = (result, timestamp)
-
-    def get_cache_statistics(self) -> Dict[str, Any]:
-        """获取缓存统计信息"""
-        stats = self.cache_stats.to_dict()
-        stats.update({
-            'hit_rate': self.cache_stats.hit_rate,
-            'memory_cache_size': len(self._memory_cache),
-            'cache_directory': str(self.cache_dir),
-            'cache_format': self.cache_format,
-            'cache_expire_hours': self.cache_expire_hours,
-            'max_cache_size': self.max_cache_size
-        })
-        return stats
-
-    def clear_cache(self, clear_disk: bool = True, clear_memory: bool = True):
-        """清理缓存"""
-        if clear_memory:
-            self._memory_cache.clear()
-
-        if clear_disk and self.cache_dir.exists():
-            for cache_file in self.cache_dir.glob("*.json"):
-                cache_file.unlink(missing_ok=True)
-            for cache_file in self.cache_dir.glob("*.pkl"):
-                cache_file.unlink(missing_ok=True)
-
-        self.cache_stats = CacheStatistics()
-        self.cache_stats.last_cleanup = time.time()
-
-        if self.enable_cache:
-            self._save_cache_statistics()
 
     def batch_process(self,
                      texts: List[str],
@@ -1179,7 +928,7 @@ class IntelligentTextProcessor:
                     cleaned_text="",
                     segments=[],
                     language=LanguageType.UNKNOWN,
-                    text_hash=self._generate_text_hash(text),
+                    text_hash="",
                     metadata={},
                     is_valid=False,
                     error_message=str(e)
@@ -1189,42 +938,27 @@ class IntelligentTextProcessor:
         return results
 
     @classmethod
-    def create_fast_processor(cls, cache_dir: Optional[str] = None) -> 'IntelligentTextProcessor':
+    def create_fast_processor(cls) -> 'IntelligentTextProcessor':
         """创建快速处理器"""
         return cls(
             max_text_length=100,
-            default_split_strategy=SplitStrategy.LENGTH,
-            enable_cache=True,
-            cache_dir=cache_dir,
-            cache_format="pickle",
-            cache_expire_hours=1.0,
-            max_cache_size=500
+            default_split_strategy=SplitStrategy.LENGTH
         )
 
     @classmethod
-    def create_quality_processor(cls, cache_dir: Optional[str] = None) -> 'IntelligentTextProcessor':
+    def create_quality_processor(cls) -> 'IntelligentTextProcessor':
         """创建高质量处理器"""
         return cls(
             max_text_length=300,
-            default_split_strategy=SplitStrategy.ADAPTIVE,
-            enable_cache=True,
-            cache_dir=cache_dir,
-            cache_format="json",
-            cache_expire_hours=24.0,
-            max_cache_size=2000
+            default_split_strategy=SplitStrategy.ADAPTIVE
         )
 
     @classmethod
-    def create_batch_processor(cls, cache_dir: Optional[str] = None) -> 'IntelligentTextProcessor':
+    def create_batch_processor(cls) -> 'IntelligentTextProcessor':
         """创建批量处理器"""
         return cls(
             max_text_length=200,
-            default_split_strategy=SplitStrategy.ADAPTIVE,
-            enable_cache=True,
-            cache_dir=cache_dir,
-            cache_format="pickle",
-            cache_expire_hours=12.0,
-            max_cache_size=5000
+            default_split_strategy=SplitStrategy.ADAPTIVE
         )
 
     @classmethod
@@ -1232,9 +966,7 @@ class IntelligentTextProcessor:
         """创建最小化处理器"""
         return cls(
             max_text_length=150,
-            default_split_strategy=SplitStrategy.LENGTH,
-            enable_cache=False,
-            max_cache_size=0
+            default_split_strategy=SplitStrategy.LENGTH
         )
 
     def get_processing_statistics(self) -> Dict[str, Any]:
@@ -1247,8 +979,7 @@ class IntelligentTextProcessor:
             'total_errors': self._processing_stats['total_errors'],
             'total_processing_time': total_time,
             'average_processing_time': total_time / total_processed if total_processed > 0 else 0.0,
-            'success_rate': (total_processed - self._processing_stats['total_errors']) / total_processed if total_processed > 0 else 0.0,
-            'cache_statistics': self.get_cache_statistics()
+            'success_rate': (total_processed - self._processing_stats['total_errors']) / total_processed if total_processed > 0 else 0.0
         }
 
 
@@ -1303,7 +1034,6 @@ def process_text(text: str,
     - 深度标准化：术语替换（AI→人工智能）、格式规范化
     - 智能分割：根据策略分割为适合TTS的片段
     - 语言检测：自动识别文本语言类型
-    - 缓存管理：自动缓存处理结果，提高性能
 
     使用场景：
     - 单个文本的完整预处理
@@ -1336,7 +1066,6 @@ def batch_process_texts(texts: List[str],
     对多个文本进行批量预处理，具有以下优势：
     - 复用全局处理器实例，减少初始化开销
     - 统一的错误处理，单个文本失败不影响其他文本
-    - 自动利用缓存机制，重复文本直接返回缓存结果
     - 适合大规模文本处理任务
 
     使用场景：
@@ -1375,7 +1104,7 @@ def batch_process_texts(texts: List[str],
                 cleaned_text="",
                 segments=[],
                 language=LanguageType.UNKNOWN,
-                text_hash=processor._generate_text_hash(text),
+                text_hash="",
                 metadata={'error_type': type(e).__name__},
                 is_valid=False,
                 error_message=str(e)
@@ -1387,13 +1116,3 @@ def batch_process_texts(texts: List[str],
 
 # ==================== 管理函数 ====================
 
-def clear_global_cache():
-    """清理全局处理器缓存"""
-    global _global_processor
-    if _global_processor is not None:
-        _global_processor.clear_cache()
-
-
-def get_global_statistics() -> Dict[str, Any]:
-    """获取全局处理器统计信息"""
-    return get_global_processor().get_cache_statistics()
