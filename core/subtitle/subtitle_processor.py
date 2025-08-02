@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 import subprocess
 
-from task.subtitle.subtitle_entry import SubtitleEntry
+from .subtitle_entry import SubtitleEntry
 
 
 # ==================== 工具类定义 ====================

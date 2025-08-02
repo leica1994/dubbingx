@@ -6,237 +6,187 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DubbingX is an intelligent video dubbing system with GPU acceleration that specializes in voice cloning and TTS (Text-to-Speech) generation. The system processes video files to separate media components (audio, video, background music), processes subtitles intelligently, and generates high-quality dubbed audio using Index-TTS.
+DubbingX is an intelligent video dubbing system with GPU acceleration and voice cloning capabilities. The system processes video files to separate audio components, generates reference audio segments from subtitles, performs TTS (Text-to-Speech) generation using voice cloning, and handles comprehensive subtitle preprocessing.
 
-## Project Structure
+## Development Environment Setup
 
-```
-dubbingx/
-├── core/                          # Core processing modules
-│   ├── media_processor.py         # Media separation (Demucs, FFmpeg)
-│   ├── tts_processor.py           # TTS generation via Index-TTS API
-│   ├── subtitle_preprocessor.py   # Subtitle preprocessing & cleaning  
-│   └── subtitle/                  # Subtitle processing subsystem
-│       ├── subtitle_entry.py      # SubtitleEntry data class
-│       ├── subtitle_processor.py  # Multi-format subtitle conversion
-│       └── text_processor.py      # AI-powered text cleaning
-├── pyproject.toml                 # uv project configuration
-└── uv.lock                       # Dependency lock file
-```
+### 依赖管理
+项目使用 **uv** 作为Python包管理器，配置了PyTorch CUDA 12.8阿里云镜像源：
 
-## Quick Start
-
-### 一键安装与运行
 ```bash
-# 1. 安装uv (如果尚未安装)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. 安装所有依赖 (默认GPU版本)
+# 一键安装所有依赖（包括PyTorch CUDA版本）
 uv sync
 
-# 3. 验证安装
-uv run python check_deps.py
+# 安装开发依赖
+uv sync --extra dev
 
-# 4. 运行示例
-uv run python demo.py
+# 添加新依赖
+uv add package_name
 ```
 
-**默认配置说明:**
-- ✅ **PyTorch GPU版本**: 默认从阿里云镜像安装CUDA 12.8版本
-- ✅ **一键安装**: 无需额外脚本，直接 `uv sync` 完成所有依赖安装
-- ✅ **自动配置**: uv会自动管理PyTorch源和版本
-- ✅ **CPU备选**: 如无GPU可运行 `uv sync --extra cpu`
+### PyTorch配置
+项目已配置PyTorch CUDA 12.8版本，对应你之前使用的pip命令：
+```bash
+# 之前的pip命令
+pip install torch torchvision torchaudio -f https://mirrors.aliyun.com/pytorch-wheels/cu128
 
-## Development Commands
+# 现在只需要
+uv sync  # 自动安装CUDA版本的PyTorch
+```
 
-### Package Management
-- **Install all dependencies**: `uv sync` (默认安装GPU版本的PyTorch，来源：阿里云镜像 CUDA 12.8)
-- **Add dependency**: `uv add <package>`
-- **Remove dependency**: `uv remove <package>`
-- **Update dependencies**: `uv sync --upgrade`
-- **Install CPU version**: `uv sync --extra cpu` (如果无GPU环境)
-- **Install dev dependencies**: `uv sync --extra dev`
-- **Verify installation**: `uv run python check_deps.py`
+### Development Tools
+```bash
+# Code formatting
+uv run black core/
+uv run isort core/
 
-### Running Code
-- **Run Python module**: `uv run -m <module>`
-- **Execute script**: `uv run python <script.py>`
-- **Run with specific Python**: `uv run --python 3.11 <command>`
+# Linting
+uv run flake8 core/
 
-### Environment Management
-- **Activate virtual environment**: uv automatically manages the venv
-- **Install with extras**: `uv sync --extra <extra_name>`
-- **Development mode**: `uv sync --dev`
+# Type checking
+uv run mypy core/
+
+# Testing
+uv run pytest
+uv run pytest --cov=core  # with coverage
+uv run pytest -m "not slow"  # skip slow tests
+```
 
 ## Core Architecture
 
-### 1. Media Processing Pipeline (`media_processor.py`)
+### Main Components
 
-**MediaProcessor** is the entry point for video processing:
-- **GPU-accelerated audio separation** using Demucs (htdemucs model)
-- **Audio extraction** from video using FFmpeg
-- **Silent video creation** by removing audio track
-- **Reference audio generation** from subtitle timing
-- **Caching system** for processed results
+1. **MediaProcessor** (`core/media_processor.py`)
+   - Primary entry point for media processing pipeline
+   - Handles video/audio separation using Demucs AI model
+   - Generates reference audio segments from subtitles
+   - Supports GPU acceleration with automatic fallback to CPU
+   - Methods: `separate_media()`, `generate_reference_audio()`
 
-**Key Methods:**
-- `separate_media()` - Main pipeline: video → silent video + vocal audio + background music
-- `generate_reference_audio()` - Creates audio segments based on subtitle timings
-- **Auto-caching** with JSON metadata for resume capability
+2. **TTSProcessor** (`core/tts_processor.py`)
+   - Integrates with Index-TTS via Gradio client API
+   - Handles voice cloning and TTS generation
+   - Manages temporary file cleanup and caching
+   - Methods: `generate_tts_from_reference()`, `_call_gradio_tts()`
 
-### 2. TTS Processing (`tts_processor.py`)
+3. **SubtitlePreprocessor** (`core/subtitle_preprocessor.py`)
+   - Comprehensive subtitle format conversion and cleaning
+   - Integrates with intelligent text processing for TTS optimization
+   - Supports ASS, SRT, VTT and other subtitle formats
+   - Methods: `preprocess_subtitle()`, `_clean_subtitle_entries_with_ai()`
 
-**TTSProcessor** handles voice cloning via Index-TTS:
-- **Gradio Client integration** for Index-TTS API communication
-- **Reference-based voice cloning** using audio segments
-- **Silence generation** for empty subtitle entries
-- **Batch processing** with automatic error handling
-- **Result caching** to avoid redundant API calls
+### Subtitle Processing Components
 
-**Key Features:**
-- Connects to Index-TTS at `http://127.0.0.1:7860` by default
-- Supports multiple TTS parameters (top_p, temperature, etc.)
-- Handles both text and empty subtitle segments appropriately
+4. **SubtitleEntry** (`core/subtitle/subtitle_entry.py`)
+   - Data class for individual subtitle entries
+   - Provides time manipulation utilities
+   - Methods: `duration_seconds()`, `shift_time()`, `scale_time()`
 
-### 3. Subtitle Processing System (`subtitle/`)
+5. **SubtitleProcessor** (`core/subtitle/subtitle_processor.py`)
+   - Extensive subtitle format conversion system
+   - ASS file formatting and style extraction
+   - Timeline regeneration from audio segments
+   - Methods: `convert_format()`, `extract_ass_style_to_srt()`, `regenerate_subtitles_from_audio()`
 
-#### SubtitleEntry (`subtitle_entry.py`)
-- **Dataclass** for subtitle timing and content
-- Time manipulation methods (`shift_time`, `scale_time`)
-- Duration calculations and validation
-- Supports style/actor metadata
+6. **IntelligentTextProcessor** (`core/subtitle/text_processor.py`)
+   - Advanced text preprocessing for TTS optimization
+   - Unicode character cleaning, bracket removal
+   - Smart percentage/number handling, language detection
+   - Caching system for performance optimization
+   - Methods: `process()`, `quick_clean_text()`, `batch_process_texts()`
 
-#### SubtitleProcessor (`subtitle_processor.py`)
-- **Multi-format support**: SRT, ASS, VTT, LRC, SBV, SAMI, TTML
-- **ASS Style extraction** for multi-language subtitles
-- **Timeline regeneration** from TTS audio segments
-- **4 regeneration strategies**:
-  - `proportional` - Equal scaling
-  - `cumulative` - Preserve gaps
-  - `gap_preserving` - Maintain relative gaps  
-  - `adaptive` - Smart strategy selection (recommended)
+## Data Flow Architecture
 
-#### Text Processing (`text_processor.py`)
-- **AI-powered text cleaning** with regex optimization
-- **Bracket content removal** (TTS doesn't need annotations)
-- **Unicode safety** ensuring GBK encoding compatibility
-- **Smart percentage/dash handling** with context awareness
-- **Language detection** (Chinese, English, Mixed, etc.)
-- **Intelligent text splitting** with multiple strategies
-- **Comprehensive caching system** (memory + disk)
+```
+Video Input → MediaProcessor → Audio Separation (Demucs)
+     ↓
+Subtitle Input → SubtitlePreprocessor → Text Cleaning → Reference Audio Generation
+     ↓
+Reference Audio + Processed Text → TTSProcessor → Voice Cloned Audio
+     ↓
+Final Assembly → Synchronized Subtitle + Audio Output
+```
 
-### 4. Subtitle Preprocessing (`subtitle_preprocessor.py`)
+## Key Features
 
-**SubtitlePreprocessor** orchestrates the subtitle pipeline:
-- **Format detection and conversion** to standardized SRT
-- **ASS file formatting** with style handling
-- **AI-powered text cleaning** integration
-- **Validation and statistics** generation
+### Audio Processing
+- **Demucs Integration**: AI-powered source separation (vocals, background music)
+- **GPU Acceleration**: Automatic CUDA detection with CPU fallback  
+- **Reference Audio Generation**: Creates training samples from subtitle timing
+- **Audio Quality Analysis**: Dynamic range, silence detection, volume normalization
 
-## Key Dependencies
+### Text Processing Intelligence
+- **Unicode Safety**: Handles problematic characters that could cause encoding issues
+- **Content Filtering**: Removes brackets, annotations, and TTS-unsuitable content
+- **Smart Number Conversion**: "20%" → "百分之二十", ranges like "1-3" → "一至三"
+- **Language Detection**: Automatic Chinese/English/Mixed language identification
 
-### Core Processing
-- **torch/torchaudio** - GPU acceleration and audio processing
-- **demucs** - State-of-the-art source separation
-- **ffmpeg-python** - Video/audio manipulation
-- **librosa/soundfile** - Audio analysis and I/O
+### TTS Integration
+- **Voice Cloning**: Uses Index-TTS for reference-based voice synthesis
+- **Gradio Client**: RESTful API integration with configurable parameters
+- **Silence Generation**: Handles empty subtitles with appropriate duration matching
+- **Batch Processing**: Efficient processing of multiple audio segments
 
-### TTS Integration  
-- **gradio-client** - Index-TTS API communication
+### Subtitle Format Support
+- **Multi-format**: ASS, SRT, VTT, LRC, SBV and more
+- **ASS Processing**: Style extraction, timeline synchronization, formatting cleanup
+- **Timeline Regeneration**: Rebuilds subtitles based on actual TTS audio durations
+- **Caching System**: Intelligent result caching with validation
 
-### Audio Enhancement
-- **noisereduce** - Audio noise reduction
-- **audiostretchy** - Time-stretching capabilities
+## Important Configuration
 
-### Text Processing
-- **scikit-learn** - ML-based text analysis
-- **loguru** - Enhanced logging
+### Dependencies
+- **PyTorch**: CUDA 12.8 support via Aliyun mirror for GPU acceleration
+- **Demucs**: AI audio source separation
+- **Gradio Client**: TTS API integration  
+- **FFmpeg**: Audio/video processing backend
+- **Librosa/SoundFile**: Audio analysis and I/O
 
-## Important Patterns & Conventions
+### Hardware Requirements
+- **GPU**: NVIDIA GPU with CUDA support recommended for Demucs
+- **Memory**: Sufficient RAM for audio processing (4GB+ recommended)
+- **Storage**: Temporary space for audio segments and caches
 
-### 1. Error Handling & Logging
-All processors use consistent error handling:
+## Common Development Patterns
+
+### Error Handling
+All major components use comprehensive exception handling with detailed logging:
 ```python
 try:
-    # Processing logic
-    return {'success': True, 'data': result}
+    result = processor.process_media(input_path)
+    if not result['success']:
+        logger.error(f"Processing failed: {result['error']}")
 except Exception as e:
-    self.logger.error(f"Operation failed: {str(e)}")
-    return {'success': False, 'error': str(e)}
+    logger.error(f"Unexpected error: {str(e)}")
 ```
 
-### 2. Caching Strategy
-- **JSON metadata files** for human-readable caching
-- **File modification time validation** for cache invalidation
-- **Hierarchical cache checking**: memory → disk → regenerate
+### Resource Management
+Components implement proper cleanup for GPU memory and temporary files:
+```python  
+def __del__(self):
+    self.clear_cache()  # Clean up resources
+```
 
-### 3. GPU Utilization
+### Progress Tracking
+Long-running operations support progress callbacks:
 ```python
-self.use_gpu = torch.cuda.is_available()
-if self.use_gpu:
-    model = model.cuda()
-    # ... GPU processing
-    torch.cuda.empty_cache()  # Always cleanup
+def process_with_progress(callback=None):
+    for i, item in enumerate(items):
+        # Process item
+        if callback:
+            callback(i + 1, total)
 ```
 
-### 4. Configuration Pattern
-All processors accept optional output directories and provide detailed result dictionaries with:
-- `success` boolean
-- `error` message (if failed)
-- Detailed metadata and statistics
-- File paths and processing info
+## Testing Strategy
 
-## Development Guidelines
-
-### When Adding New Features
-1. **Follow the processor pattern** - return detailed result dictionaries
-2. **Implement proper caching** using JSON for metadata
-3. **Add comprehensive logging** with self.logger
-4. **Handle GPU memory** properly with cleanup
-5. **Support batch processing** where applicable
-
-### Text Processing Integration
-Use the `IntelligentTextProcessor` for any text cleaning:
-```python
-from core.subtitle.text_processor import quick_clean_text, process_text
-
-# Quick cleaning
-cleaned = quick_clean_text(raw_text)
-
-# Full processing with metadata
-result = process_text(raw_text, split_strategy=SplitStrategy.ADAPTIVE)
-```
-
-### Subtitle Timeline Manipulation
-For subtitle timing adjustments:
-```python
-from core.subtitle.subtitle_processor import regenerate_subtitles_from_audio
-
-success = regenerate_subtitles_from_audio(
-    original_srt_path="input.srt",
-    audio_segments_dir="tts_output/",
-    output_srt_path="new_timing.srt",
-    strategy="adaptive"  # or "proportional", "cumulative", "gap_preserving"
-)
-```
+- **Unit Tests**: Component-level testing with pytest
+- **GPU Tests**: Marked with `@pytest.mark.gpu` for selective execution
+- **Audio Tests**: Marked with `@pytest.mark.audio` requiring sample files
+- **Slow Tests**: Marked with `@pytest.mark.slow` for CI optimization
 
 ## Performance Considerations
 
-- **GPU Memory Management**: Always call `torch.cuda.empty_cache()` after GPU operations
-- **Caching**: Leverage the built-in caching systems to avoid reprocessing
-- **Batch Processing**: Use batch methods for multiple items when available
-- **Text Processing**: The `IntelligentTextProcessor` has optimized regex compilation and caching
-
-## Common Workflows
-
-1. **Full Video Dubbing Pipeline**:
-   - MediaProcessor.separate_media() → vocal audio + silent video
-   - SubtitlePreprocessor.preprocess_subtitle() → clean SRT
-   - MediaProcessor.generate_reference_audio() → audio segments
-   - TTSProcessor.generate_tts_from_reference() → TTS audio
-   - SubtitleProcessor.regenerate_subtitles_from_audio() → new timing
-
-2. **Subtitle Processing Only**:
-   - SubtitleProcessor format conversion (ASS→SRT, etc.)
-   - Text cleaning with IntelligentTextProcessor
-   - Timeline adjustment based on audio segments
+- **Caching**: Extensive use of result caching to avoid reprocessing
+- **GPU Memory**: Automatic cleanup and memory management
+- **Batch Processing**: Optimized for handling multiple files efficiently
+- **Temporary Files**: Systematic cleanup of intermediate files

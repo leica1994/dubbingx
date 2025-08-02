@@ -1,197 +1,55 @@
 [project]
 name = "dubbingx"
 version = "0.1.0"
-description = "Intelligent video dubbing system with GPU acceleration and voice cloning"
+description = "智能视频配音系统，支持GPU加速和声音克隆"
 authors = [{name = "DubbingX Team", email = "team@dubbingx.com"}]
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
 license = {text = "MIT"}
-keywords = ["tts", "voice-cloning", "video-dubbing", "ai", "audio-processing"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Multimedia :: Sound/Audio",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-]
 
 dependencies = [
-    # Core scientific computing
-    "numpy>=1.24.0",
-    "scipy>=1.10.0",
+    # PyTorch生态系统
+    "torch",
+    "torchaudio",
+    "torchvision",
     
-    # Audio processing
-    "librosa>=0.10.0",
-    "soundfile>=0.12.1",
-    "pydub>=0.25.1",
-    "noisereduce>=3.0.0",
-    "audiostretchy>=1.3.0",
+    # AI模型
+    "demucs",
     
-    # Video/Media processing
-    "ffmpeg-python>=0.2.0",
+    # 音频处理
+    "librosa",
+    "soundfile",
+    "numpy",
     
-    # TTS Integration
-    "gradio-client>=0.8.0",
+    # 视频处理
+    "ffmpeg-python",
     
-    # Utility libraries
-    "colorlog>=6.7.0",
-    "loguru>=0.7.2",
-    "psutil>=5.9.0",
-    "fsspec>=2023.6.0",
+    # TTS集成
+    "gradio-client",
 ]
-
-[project.optional-dependencies]
-# Development dependencies
-dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.7.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
-    "mypy>=1.5.0",
-    "pre-commit>=3.3.0",
-]
-
-# Documentation
-docs = [
-    "sphinx>=7.1.0",
-    "sphinx-rtd-theme>=1.3.0",
-    "myst-parser>=2.0.0",
-]
-
-[project.urls]
-Homepage = "https://github.com/dubbingx/dubbingx"
-Documentation = "https://dubbingx.readthedocs.io/"
-Repository = "https://github.com/dubbingx/dubbingx.git"
-"Bug Tracker" = "https://github.com/dubbingx/dubbingx/issues"
-
-[project.scripts]
-dubbingx = "core:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-# UV specific configuration
-dev-dependencies = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.7.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
-    "mypy>=1.5.0",
-    "pre-commit>=3.3.0",
-]
+# 指定项目包目录
+[tool.hatch.build.targets.wheel]
+packages = ["core"]
 
-[tool.uv.sources]
-# 指定PyTorch源 (CUDA 12.8 from 阿里云镜像)
-torch = { index = "pytorch-aliyun" }
-torchvision = { index = "pytorch-aliyun" }  
-torchaudio = { index = "pytorch-aliyun" }
-
-# Index configuration for PyTorch with CUDA from Aliyun mirror
+# PyTorch CUDA 12.8索引配置
 [[tool.uv.index]]
-name = "pytorch-aliyun"
-url = "https://mirrors.aliyun.com/pytorch-wheels/cu128"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
-[tool.black]
-line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 100
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-
-[tool.mypy]
-python_version = "3.9"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
-
-[[tool.mypy.overrides]]
-module = [
-    "demucs.*",
-    "librosa.*",
-    "soundfile.*",
-    "gradio_client.*",
-    "noisereduce.*",
-    "audiostretchy.*",
+# 指定PyTorch包使用CUDA索引，支持Windows和Linux
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }
 ]
-ignore_missing_imports = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--cov=core",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
+torchaudio = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }
 ]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "gpu: marks tests that require GPU",
-    "audio: marks tests that require audio files",
-]
-
-[tool.coverage.run]
-source = ["core"]
-omit = [
-    "*/tests/*",
-    "*/test_*",
-    "*/__pycache__/*",
-    "*/migrations/*",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod",
+torchvision = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }
 ]
