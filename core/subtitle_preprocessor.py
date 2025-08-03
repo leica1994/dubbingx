@@ -10,10 +10,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .subtitle.subtitle_entry import SubtitleEntry
-from .subtitle.subtitle_processor import (TextUtils, convert_subtitle,
-                                          extract_ass_to_srt, format_ass_file)
-from .subtitle.text_processor import (IntelligentTextProcessor, SplitStrategy,
-                                      quick_clean_text)
+from .subtitle.subtitle_processor import (
+    TextUtils,
+    convert_subtitle,
+    extract_ass_to_srt,
+    format_ass_file,
+)
+from .subtitle.text_processor import (
+    IntelligentTextProcessor,
+    SplitStrategy,
+    quick_clean_text,
+)
 
 
 class SubtitlePreprocessor:
@@ -22,7 +29,9 @@ class SubtitlePreprocessor:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         # 初始化智能文本处理器
-        self.text_processor = IntelligentTextProcessor.create_quality_processor()
+        self.text_processor = (
+            IntelligentTextProcessor.create_quality_processor()
+        )
 
     def preprocess_subtitle(
             self, subtitle_path: str, output_dir: Optional[str] = None
@@ -49,7 +58,10 @@ class SubtitlePreprocessor:
         try:
             # 验证输入文件
             if not os.path.exists(subtitle_path):
-                return {"success": False, "error": f"字幕文件不存在: {subtitle_path}"}
+                return {
+                    "success": False,
+                    "error": f"字幕文件不存在: {subtitle_path}",
+                }
 
             # 设置输出目录
             if output_dir is None:
@@ -64,14 +76,21 @@ class SubtitlePreprocessor:
             self.logger.info(f"开始预处理字幕: {subtitle_path}")
 
             # 1. 检测并转换字幕格式（统一转换为SRT格式）
-            processed_subtitle_path = output_dir / f"{subtitle_name}_processed.srt"
-            format_ass_subtitle_path = output_dir / f"{subtitle_name}_formatted.ass"
+            processed_subtitle_path = (
+                    output_dir / f"{subtitle_name}_processed.srt"
+            )
+            format_ass_subtitle_path = (
+                    output_dir / f"{subtitle_name}_formatted.ass"
+            )
 
             if subtitle_format == ".ass":
-                success = format_ass_file(subtitle_path, str(format_ass_subtitle_path))
+                success = format_ass_file(
+                    subtitle_path, str(format_ass_subtitle_path)
+                )
                 if success:
                     success = extract_ass_to_srt(
-                        str(format_ass_subtitle_path), str(processed_subtitle_path)
+                        str(format_ass_subtitle_path),
+                        str(processed_subtitle_path),
                     )
                 if not success:
                     return {"success": False, "error": "ass字幕格式转换失败"}
@@ -82,16 +101,24 @@ class SubtitlePreprocessor:
                 )
                 if not success:
                     return {"success": False, "error": "字幕格式转换失败"}
-                self.logger.debug(f"字幕格式转换完成: {subtitle_format} -> .srt")
+                self.logger.debug(
+                    f"字幕格式转换完成: {subtitle_format} -> .srt"
+                )
             else:
                 # 直接复制SRT文件并进行清理
-                self._copy_and_clean_srt(subtitle_path, str(processed_subtitle_path))
+                self._copy_and_clean_srt(
+                    subtitle_path, str(processed_subtitle_path)
+                )
 
             # 2. 解析字幕条目
-            subtitle_entries = self._parse_srt_file(str(processed_subtitle_path))
+            subtitle_entries = self._parse_srt_file(
+                str(processed_subtitle_path)
+            )
 
             # 3. 清理和验证字幕条目（使用智能文本处理器）
-            cleaned_entries = self._clean_subtitle_entries_with_ai(subtitle_entries)
+            cleaned_entries = self._clean_subtitle_entries_with_ai(
+                subtitle_entries
+            )
 
             # 4. 重新写入清理后的字幕
             self._write_srt_file(str(processed_subtitle_path), cleaned_entries)
@@ -163,10 +190,14 @@ class SubtitlePreprocessor:
                     continue
 
                 # 创建时间对象
-                start_h, start_m, start_s, start_ms = map(int, time_match.groups()[:4])
+                start_h, start_m, start_s, start_ms = map(
+                    int, time_match.groups()[:4]
+                )
                 end_h, end_m, end_s, end_ms = map(int, time_match.groups()[4:])
 
-                start_time = self._create_time(start_h, start_m, start_s, start_ms)
+                start_time = self._create_time(
+                    start_h, start_m, start_s, start_ms
+                )
                 end_time = self._create_time(end_h, end_m, end_s, end_ms)
 
                 # 合并文本行并使用智能处理器清理
@@ -196,7 +227,9 @@ class SubtitlePreprocessor:
         for entry in entries:
             # 验证时间戳
             if entry.start_time_seconds() >= entry.end_time_seconds():
-                self.logger.warning(f"跳过无效时间戳的字幕: {entry.text[:20]}...")
+                self.logger.warning(
+                    f"跳过无效时间戳的字幕: {entry.text[:20]}..."
+                )
                 continue
 
             final_text = ""  # 默认为空文本
@@ -265,7 +298,9 @@ class SubtitlePreprocessor:
 
             # 调试信息：显示处理前后的文本变化
             if entry.text.strip() != final_text.strip():
-                self.logger.debug(f"文本变化: '{entry.text}' -> '{final_text}'")
+                self.logger.debug(
+                    f"文本变化: '{entry.text}' -> '{final_text}'"
+                )
 
         # 按时间排序
         cleaned_entries.sort(key=lambda x: x.start_time_seconds())
@@ -291,7 +326,9 @@ class SubtitlePreprocessor:
 
         for pattern, bracket_type in bracket_patterns:
             if re.match(pattern, text):
-                self.logger.debug(f"检测到{bracket_type}包围的纯括号内容: '{text}'")
+                self.logger.debug(
+                    f"检测到{bracket_type}包围的纯括号内容: '{text}'"
+                )
                 return True
 
         return False
@@ -314,7 +351,9 @@ class SubtitlePreprocessor:
 
         # 移除特殊字符（保留中文、英文、数字、基本标点）
         text = re.sub(
-            r"[^\w\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef.,!?;:\'\"()-]", "", text
+            r"[^\w\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef.,!?;:\'\"()-]",
+            "",
+            text,
         )
 
         return text
@@ -354,3 +393,55 @@ class SubtitlePreprocessor:
     def get_processing_statistics(self) -> Dict[str, Any]:
         """获取处理统计信息"""
         return self.text_processor.get_processing_statistics()
+
+
+# 单例实例
+_processor_instance = None
+
+
+def get_subtitle_preprocessor() -> SubtitlePreprocessor:
+    global _processor_instance
+    if _processor_instance is None:
+        _processor_instance = SubtitlePreprocessor()
+    return _processor_instance
+
+
+def preprocess_subtitle(
+        subtitle_path: str, output_dir: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    预处理字幕文件的便捷函数
+
+    根据字幕路径预处理字幕，支持多种格式转换和智能文本清理
+
+    Args:
+        subtitle_path: 字幕文件路径（支持.srt、.ass等格式）
+        output_dir: 输出目录，默认为字幕文件所在目录
+
+    Returns:
+        Dict[str, Any]: 处理结果，包含：
+            - success: bool - 处理是否成功
+            - processed_subtitle_path: str - 预处理后的字幕文件路径
+            - subtitle_entries: List[SubtitleEntry] - 字幕条目列表
+            - total_entries: int - 字幕条目总数
+            - total_duration: float - 字幕总时长（秒）
+            - format: str - 字幕格式
+            - text_processing_stats: Dict[str, Any] - 文本处理统计信息
+            - error: str - 错误信息（如果有）
+
+    Example:
+        >>> result = preprocess_subtitle(
+        ...     subtitle_path="input/subtitle.ass",
+        ...     output_dir="output/processed"
+        ... )
+        >>> if result['success']:
+        ...     print(f"预处理完成: {result['processed_subtitle_path']}")
+        ...     print(f"字幕条目数: {result['total_entries']}")
+        ...     print(f"总时长: {result['total_duration']:.1f}秒")
+        ... else:
+        ...     print(f"处理失败: {result['error']}")
+    """
+    return get_subtitle_preprocessor().preprocess_subtitle(
+        subtitle_path=subtitle_path,
+        output_dir=output_dir,
+    )
