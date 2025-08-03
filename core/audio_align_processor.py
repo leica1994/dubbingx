@@ -1776,6 +1776,14 @@ class AudioAlignProcessor:
 
                     # 检查是否需要变速
                     speed_ratio = segment.get("speed_ratio", 1.0)
+                    
+                    # 应用变速补偿系数，减少FFmpeg变速的精度损失
+                    # 根据实际测试结果，FFmpeg变速通常会让视频变短，所以需要适当增加变速比例
+                    if speed_ratio != 1.0:
+                        compensation_factor = 0.99  # 1%的补偿系数
+                        speed_ratio = speed_ratio * compensation_factor
+                        self.logger.debug(f"应用补偿系数后变速比例: {speed_ratio:.6f}")
+                    
                     if (
                             abs(speed_ratio - 1.0) < 0.01
                     ):  # 变速比例接近1.0，不需要变速
