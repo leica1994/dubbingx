@@ -537,3 +537,42 @@ class TTSProcessor:
             self.clear_cache()
         except Exception:
             pass  # 析构时忽略错误
+
+
+# 单例实例
+_tts_processor_instance = None
+
+
+def get_tts_processor(api_url: str = "http://127.0.0.1:7860") -> TTSProcessor:
+    """获取 TTSProcessor 单例实例"""
+    global _tts_processor_instance
+    if _tts_processor_instance is None:
+        _tts_processor_instance = TTSProcessor(api_url)
+    return _tts_processor_instance
+
+
+# 便捷函数
+def generate_tts_from_reference(reference_results_path: str, output_dir: Optional[str] = None, 
+                               api_url: str = "http://127.0.0.1:7860") -> Dict[str, Any]:
+    """
+    便捷函数：根据参考音频结果生成TTS语音
+    
+    Args:
+        reference_results_path: 参考音频结果JSON文件路径
+        output_dir: TTS输出目录，默认为JSON文件所在目录下的tts_output
+        api_url: TTS API URL
+        
+    Returns:
+        包含TTS生成结果的字典
+    """
+    return get_tts_processor(api_url).generate_tts_from_reference(reference_results_path, output_dir)
+
+
+def clear_tts_cache(api_url: str = "http://127.0.0.1:7860"):
+    """
+    便捷函数：清理TTS模型缓存
+    
+    Args:
+        api_url: TTS API URL
+    """
+    get_tts_processor(api_url).clear_cache()

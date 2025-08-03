@@ -185,7 +185,7 @@ class MediaProcessor:
             if self.use_gpu:
                 torch.cuda.empty_cache()
 
-    def generate_reference_audio(self, audio_path: str, subtitle_path: str, output_dir: Optional[str] = None, 
+    def generate_reference_audio(self, audio_path: str, subtitle_path: str, output_dir: Optional[str] = None,
                                 normalize_volume: bool = True) -> Dict[str, Any]:
         """
         根据字幕分隔音频生成参考音频
@@ -879,3 +879,252 @@ class MediaProcessor:
         except Exception as e:
             self.logger.warning(f"音量归一化失败: {str(e)}")
             return audio
+
+    def merge_audio_video(self, video_path: str, audio_path: str, output_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        合并音频和视频文件，自动处理时长差异
+        
+        规则：
+        - 如果音频时长 > 视频时长：视频补最后一帧延长到音频时长
+        - 如果视频时长 > 音频时长：音频补静音延长到视频时长
+        - 最终输出时长为较长者的时长
+        
+        Args:
+            video_path: 视频文件路径（可以是无声视频）
+            audio_path: 音频文件路径（包含新的音轨）
+            output_path: 输出文件路径，默认为视频文件目录下的 {video_name}_merged.mp4
+            
+        Returns:
+            包含合并结果的字典：
+            {
+                'success': bool,
+                'output_path': str,  # 合并后的视频文件路径
+                'video_duration': float,  # 原视频时长
+                'audio_duration': float,  # 原音频时长
+                'final_duration': float,  # 最终输出时长
+                'adjustments': {
+                    'video_extended': bool,  # 是否延长了视频
+                    'audio_extended': bool,  # 是否延长了音频
+                },
+                'error': str  # 错误信息（如果有）
+            }
+        """
+        try:
+            # 验证输入文件
+            if not os.path.exists(video_path):
+                return {'success': False, 'error': f'视频文件不存在: {video_path}'}
+                
+            if not os.path.exists(audio_path):
+                return {'success': False, 'error': f'音频文件不存在: {audio_path}'}
+            
+            # 设置输出路径
+            if output_path is None:
+                video_name = Path(video_path).stem
+                output_dir = Path(video_path).parent
+                output_path = output_dir / f"{video_name}_merged.mp4"
+            else:
+                output_path = Path(output_path)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            self.logger.info(f"开始合并音视频: 视频={video_path}, 音频={audio_path}")
+            
+            # 获取音视频时长
+            video_duration = self._get_video_duration(video_path)
+            audio_duration = self._get_audio_duration(audio_path)
+            
+            self.logger.info(f"视频时长: {video_duration:.2f}s, 音频时长: {audio_duration:.2f}s")
+            
+            # 确定最终时长和需要的调整
+            final_duration = max(video_duration, audio_duration)
+            video_extended = audio_duration > video_duration
+            audio_extended = video_duration > audio_duration
+            
+            if video_extended:
+                self.logger.info(f"音频较长，将视频延长到 {final_duration:.2f}s（补最后一帧）")
+            elif audio_extended:
+                self.logger.info(f"视频较长，将音频延长到 {final_duration:.2f}s（补静音）")
+            else:
+                self.logger.info("音视频时长一致，无需调整")
+            
+            # 使用ffmpeg合并音视频，带时长调整
+            self._merge_audio_video_with_duration_adjustment(
+                video_path, audio_path, str(output_path),
+                video_duration, audio_duration, final_duration
+            )
+            
+            self.logger.info(f"音视频合并完成: {output_path}")
+            
+            return {
+                'success': True,
+                'output_path': str(output_path),
+                'video_duration': video_duration,
+                'audio_duration': audio_duration,
+                'final_duration': final_duration,
+                'adjustments': {
+                    'video_extended': video_extended,
+                    'audio_extended': audio_extended,
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"音视频合并失败: {str(e)}")
+            return {'success': False, 'error': str(e)}
+    
+    def _merge_audio_video_ffmpeg(self, video_path: str, audio_path: str, output_path: str):
+        """使用ffmpeg合并音频和视频"""
+        try:
+            # 使用ffmpeg-python进行合并
+            input_video = ffmpeg.input(video_path)
+            input_audio = ffmpeg.input(audio_path)
+            
+            # 合并音视频流
+            output = ffmpeg.output(
+                input_video['v'],  # 视频流
+                input_audio['a'],  # 音频流
+                output_path,
+                vcodec='libx264',  # 视频编码器
+                acodec='aac',      # 音频编码器
+                preset='fast',     # 编码预设
+                crf=23,           # 视频质量
+                audio_bitrate='128k'  # 音频比特率
+            )
+            
+            # 执行合并
+            ffmpeg.run(output, overwrite_output=True, quiet=True)
+            
+            self.logger.debug(f"ffmpeg合并完成: {output_path}")
+            
+        except Exception as e:
+            raise Exception(f"ffmpeg合并音视频失败: {str(e)}")
+
+    def _get_video_duration(self, video_path: str) -> float:
+        """获取视频时长"""
+        try:
+            probe = ffmpeg.probe(video_path)
+            duration = float(probe['streams'][0]['duration'])
+            return duration
+        except Exception as e:
+            self.logger.warning(f"获取视频时长失败，使用默认值: {str(e)}")
+            return 0.0
+
+    def _get_audio_duration(self, audio_path: str) -> float:
+        """获取音频时长"""
+        try:
+            # 优先使用 librosa
+            duration = librosa.get_duration(path=audio_path)
+            return duration
+        except Exception:
+            try:
+                # 备选方案：使用 soundfile
+                info = sf.info(audio_path)
+                return info.duration
+            except Exception as e:
+                self.logger.warning(f"获取音频时长失败，使用默认值: {str(e)}")
+                return 0.0
+
+    def _merge_audio_video_with_duration_adjustment(self, video_path: str, audio_path: str,
+                                                   output_path: str, video_duration: float,
+                                                   audio_duration: float, final_duration: float):
+        """使用ffmpeg合并音视频，带时长调整"""
+        try:
+            input_video = ffmpeg.input(video_path)
+            input_audio = ffmpeg.input(audio_path)
+            
+            # 处理视频流
+            if audio_duration > video_duration:
+                # 音频较长，需要延长视频（补最后一帧）
+                video_stream = input_video['v'].filter('tpad', stop_mode='clone', stop_duration=final_duration)
+                self.logger.debug(f"视频延长：从 {video_duration:.2f}s 到 {final_duration:.2f}s")
+            else:
+                # 视频不需要延长或等长
+                video_stream = input_video['v']
+            
+            # 处理音频流
+            if video_duration > audio_duration:
+                # 视频较长，需要延长音频（补静音）
+                silence_duration = final_duration - audio_duration
+                audio_stream = input_audio['a'].filter('apad', pad_dur=silence_duration)
+                self.logger.debug(f"音频延长：从 {audio_duration:.2f}s 到 {final_duration:.2f}s")
+            else:
+                # 音频不需要延长或等长
+                audio_stream = input_audio['a']
+            
+            # 合并音视频流，确保最终时长
+            output = ffmpeg.output(
+                video_stream,
+                audio_stream,
+                output_path,
+                vcodec='libx264',     # 视频编码器
+                acodec='aac',         # 音频编码器
+                preset='fast',        # 编码预设
+                crf=23,              # 视频质量
+                audio_bitrate='128k',  # 音频比特率
+                t=final_duration       # 限制输出时长
+            )
+            
+            # 执行合并
+            ffmpeg.run(output, overwrite_output=True, quiet=True)
+            
+            self.logger.debug(f"ffmpeg时长调整合并完成: {output_path}")
+            
+        except Exception as e:
+            raise Exception(f"ffmpeg时长调整合并失败: {str(e)}")
+
+
+# 单例实例
+_media_processor_instance = None
+
+
+def get_media_processor() -> MediaProcessor:
+    """获取 MediaProcessor 单例实例"""
+    global _media_processor_instance
+    if _media_processor_instance is None:
+        _media_processor_instance = MediaProcessor()
+    return _media_processor_instance
+
+
+# 便捷函数
+def separate_media(video_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    """
+    便捷函数：分离视频中的人声、无声视频和背景音乐
+    
+    Args:
+        video_path: 视频文件路径
+        output_dir: 输出目录，默认为视频文件所在目录
+        
+    Returns:
+        包含分离结果的字典
+    """
+    return get_media_processor().separate_media(video_path, output_dir)
+
+
+def generate_reference_audio(audio_path: str, subtitle_path: str, output_dir: Optional[str] = None,
+                           normalize_volume: bool = True) -> Dict[str, Any]:
+    """
+    便捷函数：根据字幕分隔音频生成参考音频
+    
+    Args:
+        audio_path: 音频文件路径
+        subtitle_path: 字幕文件路径
+        output_dir: 输出目录，默认为音频文件所在目录
+        normalize_volume: 是否进行音量一致性增强
+        
+    Returns:
+        包含参考音频生成结果的字典
+    """
+    return get_media_processor().generate_reference_audio(audio_path, subtitle_path, output_dir, normalize_volume)
+
+
+def merge_audio_video(video_path: str, audio_path: str, output_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    便捷函数：合并音频和视频文件
+    
+    Args:
+        video_path: 视频文件路径
+        audio_path: 音频文件路径
+        output_path: 输出文件路径，默认为视频文件目录下的 {video_name}_merged.mp4
+        
+    Returns:
+        包含合并结果的字典
+    """
+    return get_media_processor().merge_audio_video(video_path, audio_path, output_path)

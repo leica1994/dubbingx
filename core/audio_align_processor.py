@@ -760,9 +760,9 @@ class AudioAlignProcessor:
             return "00:00:00,000"
 
     def process_video_speed_adjustment(self,
-                                        silent_video_path: str,
-                                        original_srt_path: str,
-                                        new_srt_path: str) -> Dict[str, Any]:
+                                       silent_video_path: str,
+                                       original_srt_path: str,
+                                       new_srt_path: str) -> Dict[str, Any]:
         """
         处理视频变速调整：根据原字幕和新字幕进行视频分割、变速处理和拼接
         
@@ -1674,12 +1674,11 @@ class AudioAlignProcessor:
             return ""
 
 
-# 全局单例实例
+# 单例实例
 _processor_instance = None
 
 
 def _get_processor() -> AudioAlignProcessor:
-    """获取AudioAlignProcessor单例实例"""
     global _processor_instance
     if _processor_instance is None:
         _processor_instance = AudioAlignProcessor()
@@ -1749,8 +1748,8 @@ def generate_aligned_srt(aligned_results_path: str,
 
 
 def process_video_speed_adjustment(silent_video_path: str,
-                                    original_srt_path: str,
-                                    new_srt_path: str) -> Dict[str, Any]:
+                                   original_srt_path: str,
+                                   new_srt_path: str) -> Dict[str, Any]:
     """
     处理视频变速调整：根据原字幕和新字幕进行视频分割、变速处理和拼接
     
