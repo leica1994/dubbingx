@@ -868,87 +868,12 @@ class MediaProcessor:
             with open(json_path, "r", encoding="utf-8") as f:
                 cached_results = json.load(f)
 
-            # 验证缓存有效性
-            if not self._is_cache_valid(
-                    cached_results, audio_path, subtitle_path
-            ):
-                self.logger.info(f"缓存文件已过期，将重新生成: {json_path}")
-                return None
-
-            self.logger.info(f"找到有效缓存文件，直接返回结果: {json_path}")
+            self.logger.info(f"找到缓存文件: {json_path}")
             return cached_results
 
         except Exception as e:
             self.logger.warning(f"加载缓存文件失败: {str(e)}")
             return None
-
-    def _is_cache_valid(
-            self,
-            cached_results: Dict[str, Any],
-            audio_path: str,
-            subtitle_path: str,
-    ) -> bool:
-        """验证缓存是否有效"""
-        try:
-            # 检查必要字段
-            if not cached_results.get("success", False):
-                return False
-
-            # 检查文件路径是否匹配
-            cached_subtitle_file = cached_results.get("subtitle_file", "")
-            if cached_subtitle_file != subtitle_path:
-                self.logger.debug(
-                    f"字幕文件路径不匹配: {cached_subtitle_file} != {subtitle_path}"
-                )
-                return False
-
-            # 检查源文件是否存在且未被修改
-            if not os.path.exists(audio_path) or not os.path.exists(
-                    subtitle_path
-            ):
-                return False
-
-            # 检查音频文件修改时间
-            audio_mtime = os.path.getmtime(audio_path)
-            subtitle_mtime = os.path.getmtime(subtitle_path)
-
-            # 获取缓存创建时间
-            saved_at_str = cached_results.get("saved_at", "")
-            if not saved_at_str:
-                return False
-
-            try:
-                cache_time = datetime.datetime.fromisoformat(
-                    saved_at_str
-                ).timestamp()
-            except ValueError:
-                return False
-
-            # 如果源文件比缓存新，则缓存无效
-            if audio_mtime > cache_time or subtitle_mtime > cache_time:
-                self.logger.debug("源文件比缓存新，缓存无效")
-                return False
-
-            # 验证音频片段文件是否还存在
-            segments = cached_results.get("reference_audio_segments", [])
-            missing_files = []
-            for segment in segments:
-                file_path = segment.get("file_path")
-                if file_path and not os.path.exists(file_path):
-                    missing_files.append(file_path)
-
-            if missing_files:
-                self.logger.debug(
-                    f"部分音频文件缺失，缓存无效: {missing_files[:3]}..."
-                )
-                return False
-
-            self.logger.debug("缓存验证通过")
-            return True
-
-        except Exception as e:
-            self.logger.warning(f"缓存验证失败: {str(e)}")
-            return False
 
     @staticmethod
     def _time_to_seconds(time_obj) -> float:
@@ -1114,7 +1039,9 @@ class MediaProcessor:
             # 设置输出路径
             if output_path is None:
                 video_name = Path(video_path).stem
-                output_dir = Path(video_path).parent
+                video_parent_dir = Path(video_path).parent.parent  # 上级目录
+                output_dir = video_parent_dir / "final_video"
+                output_dir.mkdir(parents=True, exist_ok=True)
                 output_path = output_dir / f"{video_name}_merged.mp4"
             else:
                 output_path = Path(output_path)

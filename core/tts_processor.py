@@ -457,57 +457,11 @@ class TTSProcessor:
                 cached_data = json.load(f)
 
             # 验证缓存有效性
-            if self._is_tts_cache_valid(cached_data, reference_path):
-                return cached_data
-            else:
-                return None
+            return cached_data
 
         except Exception as e:
             self.logger.warning(f"检查TTS缓存失败: {str(e)}")
             return None
-
-    def _is_tts_cache_valid(
-            self, cached_data: Dict[str, Any], reference_path: str
-    ) -> bool:
-        """验证TTS缓存是否有效"""
-        try:
-            # 检查基本字段
-            if not cached_data.get("success", False):
-                return False
-
-            # 检查参考文件路径
-            if cached_data.get("reference_file") != reference_path:
-                return False
-
-            # 检查参考文件修改时间
-            if not os.path.exists(reference_path):
-                return False
-
-            ref_mtime = os.path.getmtime(reference_path)
-            cache_time_str = cached_data.get("saved_at", "")
-
-            if cache_time_str:
-                try:
-                    cache_time = datetime.datetime.fromisoformat(
-                        cache_time_str
-                    ).timestamp()
-                    if ref_mtime > cache_time:
-                        return False
-                except ValueError:
-                    return False
-
-            # 检查TTS文件是否存在
-            tts_segments = cached_data.get("tts_audio_segments", [])
-            for segment in tts_segments:
-                tts_file = segment.get("tts_file")
-                if tts_file and not os.path.exists(tts_file):
-                    return False
-
-            return True
-
-        except Exception as e:
-            self.logger.warning(f"TTS缓存验证失败: {str(e)}")
-            return False
 
     def _save_tts_results(self, results: Dict[str, Any], output_dir: Path):
         """保存TTS结果"""
