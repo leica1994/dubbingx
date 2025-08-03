@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal, getcontext
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +20,9 @@ import numpy as np
 import soundfile as sf
 
 from core.subtitle.subtitle_entry import SubtitleEntry
+
+# 设置高精度计算上下文
+getcontext().prec = 28
 
 
 @dataclass
@@ -1132,14 +1136,29 @@ class AudioAlignProcessor:
         if video_total_duration <= 0:
             return {"success": False, "error": "无法获取视频时长"}
 
-        # 根据原字幕切割视频片段
-        video_segments = self._cut_video_segments_by_subtitles(
-            original_subtitles, video_total_duration
+        # 构建原字幕video_segments，即使间隔为0也要添加标记
+        original_video_segments = self._build_segments_from_subtitles(
+            original_subtitles, video_total_duration, "original"
         )
 
-        # 计算变速比例并合并短片段
-        speed_adjusted_segments = self._calculate_speed_ratios_and_merge(
-            video_segments, new_subtitles, min_duration=0.3
+        # 构建新字幕segments，处理方式相同
+        new_video_segments = self._build_segments_from_subtitles(
+            new_subtitles, video_total_duration, "new"
+        )
+
+        # 根据索引合并两个片段列表的结果
+        merged_segments = self._merge_segments_by_index(
+            original_video_segments, new_video_segments
+        )
+
+        # 对小于0.3s的片段进行向上合并
+        compact_segments = self._merge_short_segments_upward(
+            merged_segments, min_duration=0.3
+        )
+
+        # 计算变速ratio
+        speed_adjusted_segments = self._calculate_final_speed_ratios(
+            compact_segments
         )
 
         # 构建完整的处理结果
@@ -1410,6 +1429,72 @@ class AudioAlignProcessor:
             self.logger.warning("没有成功的变速片段进行拼接")
 
         return processing_result
+
+    def _get_actual_video_duration(self, video_path: str) -> float:
+        """
+        获取视频文件的实际时长（用于验证拼接结果）
+        
+        Args:
+            video_path: 视频文件路径
+            
+        Returns:
+            float: 实际视频时长（秒）
+        """
+        try:
+            if not os.path.exists(video_path):
+                return 0.0
+                
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v", "quiet",
+                    "-show_entries", "format=duration",
+                    "-of", "csv=p=0",
+                    video_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                actual_duration = float(result.stdout.strip())
+                self.logger.debug(f"获取到实际视频时长: {actual_duration:.6f}s")
+                return actual_duration
+            else:
+                self.logger.warning(f"无法获取视频时长: {result.stderr}")
+                return 0.0
+                
+        except Exception as e:
+            self.logger.error(f"获取实际视频时长失败: {str(e)}")
+            return 0.0
+
+    def _calculate_high_precision_duration(self, segments: List[Dict[str, Any]]) -> Decimal:
+        """
+        使用高精度计算总时长，减少累积误差
+        
+        Args:
+            segments: 片段列表
+            
+        Returns:
+            Decimal: 高精度总时长
+        """
+        try:
+            total_duration = Decimal('0')
+            
+            for segment in segments:
+                # 优先使用target_duration，然后是actual_output_duration
+                duration = segment.get("target_duration", 
+                                     segment.get("actual_output_duration", 
+                                               segment.get("duration", 0)))
+                if duration > 0:
+                    total_duration += Decimal(str(duration))
+                    
+            return total_duration
+            
+        except Exception as e:
+            self.logger.error(f"高精度时长计算失败: {str(e)}")
+            return Decimal('0')
 
     def _get_video_duration(self, video_path: str) -> float:
         """获取视频总时长"""
@@ -2320,15 +2405,21 @@ class AudioAlignProcessor:
                     # 输入文件
                     cmd.extend(["-i", str(original_path)])
 
-                    # 变速处理
+                    # 变速处理 - 使用更精确的参数
                     if speed_ratio > 1.0:
-                        # 加速：使用setpts滤镜
+                        # 加速：使用setpts滤镜，添加高精度处理
                         pts_ratio = 1.0 / speed_ratio
-                        cmd.extend(["-filter:v", f"setpts={pts_ratio}*PTS"])
+                        cmd.extend([
+                            "-filter:v", 
+                            f"setpts={pts_ratio:.8f}*PTS"  # 提高精度到8位小数
+                        ])
                     else:
-                        # 减速：可选择使用插值
+                        # 减速：使用高精度setpts
                         pts_ratio = 1.0 / speed_ratio
-                        cmd.extend(["-filter:v", f"setpts={pts_ratio}*PTS"])
+                        cmd.extend([
+                            "-filter:v", 
+                            f"setpts={pts_ratio:.8f}*PTS"  # 提高精度到8位小数
+                        ])
 
                     # 添加GPU编码参数
                     if gpu_params:
@@ -2450,7 +2541,7 @@ class AudioAlignProcessor:
 
             # 收集有效的视频片段文件
             valid_segments = []
-            total_target_duration = 0.0
+            theoretical_duration = Decimal('0')  # 使用高精度计算
 
             for segment in segments:
                 # 优先使用变速后的文件，否则使用原始分割文件
@@ -2463,25 +2554,28 @@ class AudioAlignProcessor:
                     video_file_path = segment["segment_file_path"]
 
                 if video_file_path and os.path.exists(video_file_path):
+                    # 获取片段的目标时长
+                    segment_duration = segment.get(
+                        "actual_output_duration",
+                        segment.get(
+                            "target_duration",
+                            segment.get("duration", 0),
+                        ),
+                    )
+                    
                     valid_segments.append(
                         {
                             "index": segment["index"],
                             "file_path": video_file_path,
-                            "target_duration": segment.get(
-                                "actual_output_duration",
-                                segment.get(
-                                    "target_duration",
-                                    segment.get("duration", 0),
-                                ),
-                            ),
+                            "target_duration": segment_duration,
                             "is_speed_processed": segment.get(
                                 "speed_processing_success", False
                             ),
                         }
                     )
-                    total_target_duration += valid_segments[-1][
-                        "target_duration"
-                    ]
+                    
+                    # 使用高精度累加
+                    theoretical_duration += Decimal(str(segment_duration))
                 else:
                     self.logger.warning(
                         f"片段 {segment['index']} 没有有效的视频文件，跳过"
@@ -2521,12 +2615,14 @@ class AudioAlignProcessor:
                 else:
                     cmd.extend(["-c:v", "libx264", "-preset", "fast"])
 
-                # 输出参数
+                # 输出参数 - 添加更精确的时间戳处理
                 cmd.extend(
                     [
-                        "-avoid_negative_ts",
-                        "make_zero",
-                        "-an",  # 移除音频
+                        "-avoid_negative_ts", "make_zero",
+                        "-fflags", "+genpts",  # 生成精确的PTS
+                        "-vsync", "cfr",       # 恒定帧率
+                        "-r", "30",            # 确保帧率一致性
+                        "-an",                 # 移除音频
                         str(final_video_path),
                     ]
                 )
@@ -2536,17 +2632,35 @@ class AudioAlignProcessor:
                 result = subprocess.run(cmd, capture_output=True, text=True)
 
                 if result.returncode == 0:
-                    # 拼接成功
+                    # 拼接成功 - 获取实际视频时长
+                    actual_video_duration = self._get_actual_video_duration(str(final_video_path))
+                    theoretical_duration_float = float(theoretical_duration)
+                    
+                    # 计算时长差异
+                    duration_difference = abs(actual_video_duration - theoretical_duration_float)
+                    duration_accuracy = (1 - duration_difference / theoretical_duration_float) * 100 if theoretical_duration_float > 0 else 0
+                    
+                    # 文件大小
                     file_size = (
                         final_video_path.stat().st_size
                         if final_video_path.exists()
                         else 0
                     )
 
+                    # 详细的时长分析
+                    duration_analysis = {
+                        "theoretical_duration": round(theoretical_duration_float, 6),
+                        "actual_duration": round(actual_video_duration, 6),
+                        "duration_difference": round(duration_difference, 6),
+                        "accuracy_percentage": round(duration_accuracy, 2),
+                        "precision_level": "high" if duration_difference < 0.1 else "medium" if duration_difference < 1.0 else "low"
+                    }
+
                     concat_result = {
                         "success": True,
                         "output_path": str(final_video_path),
-                        "total_duration": round(total_target_duration, 3),
+                        "total_duration": round(actual_video_duration, 3),  # 使用实际时长
+                        "theoretical_duration": round(theoretical_duration_float, 3),
                         "file_size": file_size,
                         "segments_count": len(valid_segments),
                         "speed_processed_count": sum(
@@ -2554,10 +2668,12 @@ class AudioAlignProcessor:
                             for seg in valid_segments
                             if seg["is_speed_processed"]
                         ),
+                        "duration_analysis": duration_analysis,
                         "concatenation_info": {
                             "segments_used": len(valid_segments),
                             "total_segments": len(segments),
                             "concatenated_at": datetime.now().isoformat(),
+                            "precision_improvements": "Applied high-precision timing and enhanced FFmpeg parameters",
                         },
                     }
 
@@ -2565,6 +2681,16 @@ class AudioAlignProcessor:
                     self.logger.info(
                         f"拼接了 {len(valid_segments)} 个片段，其中 {concat_result['speed_processed_count']} 个经过变速处理"
                     )
+                    self.logger.info(
+                        f"时长分析: 理论 {theoretical_duration_float:.3f}s, 实际 {actual_video_duration:.3f}s, "
+                        f"差异 {duration_difference:.3f}s ({duration_accuracy:.1f}% 精度)"
+                    )
+                    
+                    # 如果时长差异较大，记录警告
+                    if duration_difference > 1.0:
+                        self.logger.warning(
+                            f"时长差异较大: {duration_difference:.3f}s，可能影响音视频同步效果"
+                        )
 
                     return concat_result
                 else:
@@ -2791,6 +2917,394 @@ class AudioAlignProcessor:
             return "vaapi" in result.stdout.lower()
         except Exception:
             return False
+
+    def _build_segments_from_subtitles(
+            self,
+            subtitles: List[SubtitleEntry],
+            video_duration: float,
+            segment_source: str = "original"
+    ) -> List[Dict[str, Any]]:
+        """
+        根据字幕构建视频片段，即使间隔为0也要添加标记
+        
+        Args:
+            subtitles: 字幕条目列表
+            video_duration: 视频总时长
+            segment_source: 片段来源标识
+            
+        Returns:
+            List[Dict[str, Any]]: 片段列表，包含间隔片段和字幕片段
+        """
+        try:
+            segments = []
+            segment_index = 0
+            current_time = 0.0
+            
+            for i, subtitle in enumerate(subtitles):
+                subtitle_start = subtitle.start_time_seconds()
+                subtitle_end = subtitle.end_time_seconds()
+                
+                # 添加间隔片段（即使时长为0）
+                gap_duration = subtitle_start - current_time
+                gap_type = "prefix" if i == 0 else "gap"
+                
+                gap_segment = {
+                    "index": segment_index,
+                    "start_time": round(current_time, 3),
+                    "end_time": round(subtitle_start, 3),
+                    "duration": round(gap_duration, 3),
+                    "segment_type": gap_type,
+                    "text": f"间隔片段 {current_time:.3f}s - {subtitle_start:.3f}s",
+                    "source": segment_source,
+                    "subtitle_index": None,
+                    "original_duration": round(gap_duration, 3),
+                }
+                segments.append(gap_segment)
+                segment_index += 1
+                
+                # 添加字幕片段
+                subtitle_duration = subtitle_end - subtitle_start
+                subtitle_segment = {
+                    "index": segment_index,
+                    "start_time": round(subtitle_start, 3),
+                    "end_time": round(subtitle_end, 3),
+                    "duration": round(subtitle_duration, 3),
+                    "segment_type": "subtitle",
+                    "text": subtitle.text,
+                    "source": segment_source,
+                    "subtitle_index": i,
+                    "original_duration": round(subtitle_duration, 3),
+                }
+                segments.append(subtitle_segment)
+                segment_index += 1
+                current_time = subtitle_end
+                
+            # 添加最后一个间隔片段（从最后字幕结束到视频结束）
+            if current_time < video_duration:
+                final_gap_duration = video_duration - current_time
+                final_gap_segment = {
+                    "index": segment_index,
+                    "start_time": round(current_time, 3),
+                    "end_time": round(video_duration, 3),
+                    "duration": round(final_gap_duration, 3),
+                    "segment_type": "suffix",
+                    "text": f"后缀片段 {current_time:.3f}s - {video_duration:.3f}s",
+                    "source": segment_source,
+                    "subtitle_index": None,
+                    "original_duration": round(final_gap_duration, 3),
+                }
+                segments.append(final_gap_segment)
+            elif current_time == video_duration:
+                # 即使时长为0也添加后缀片段标记
+                final_gap_segment = {
+                    "index": segment_index,
+                    "start_time": round(current_time, 3),
+                    "end_time": round(video_duration, 3),
+                    "duration": 0.0,
+                    "segment_type": "suffix",
+                    "text": f"后缀片段 {current_time:.3f}s - {video_duration:.3f}s (零时长)",
+                    "source": segment_source,
+                    "subtitle_index": None,
+                    "original_duration": 0.0,
+                }
+                segments.append(final_gap_segment)
+                
+            return segments
+            
+        except Exception as e:
+            self.logger.error(f"构建片段失败: {str(e)}")
+            return []
+
+    def _merge_segments_by_index(
+            self,
+            original_segments: List[Dict[str, Any]],
+            new_segments: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        根据索引合并原字幕和新字幕的片段结果
+        
+        Args:
+            original_segments: 原字幕构建的片段列表
+            new_segments: 新字幕构建的片段列表
+            
+        Returns:
+            List[Dict[str, Any]]: 合并后的片段列表
+        """
+        try:
+            merged_segments = []
+            
+            # 确保两个列表长度相同（应该是相同的，因为结构一致）
+            max_length = max(len(original_segments), len(new_segments))
+            
+            for i in range(max_length):
+                # 获取对应索引的片段
+                original_segment = original_segments[i] if i < len(original_segments) else None
+                new_segment = new_segments[i] if i < len(new_segments) else None
+                
+                if original_segment is None and new_segment is None:
+                    continue
+                    
+                # 以原字幕片段为基础进行合并
+                if original_segment is not None:
+                    merged_segment = original_segment.copy()
+                    
+                    # 如果有对应的新字幕片段，添加新字幕的信息
+                    if new_segment is not None:
+                        if merged_segment["segment_type"] == "subtitle" and new_segment["segment_type"] == "subtitle":
+                            # 字幕片段：添加新字幕的时间信息
+                            merged_segment.update({
+                                "new_start_time": new_segment["start_time"],
+                                "new_end_time": new_segment["end_time"],
+                                "new_duration": new_segment["duration"],
+                                "new_text": new_segment["text"],
+                                "new_subtitle_index": new_segment["subtitle_index"],
+                            })
+                        elif merged_segment["segment_type"] in ["gap", "prefix", "suffix"] and new_segment["segment_type"] in ["gap", "prefix", "suffix"]:
+                            # 间隔片段：添加新时间信息
+                            merged_segment.update({
+                                "new_start_time": new_segment["start_time"],
+                                "new_end_time": new_segment["end_time"],
+                                "new_duration": new_segment["duration"],
+                            })
+                    else:
+                        # 没有对应的新字幕片段，使用原片段信息
+                        merged_segment.update({
+                            "new_start_time": original_segment["start_time"],
+                            "new_end_time": original_segment["end_time"],
+                            "new_duration": original_segment["duration"],
+                        })
+                        if original_segment["segment_type"] == "subtitle":
+                            merged_segment.update({
+                                "new_text": original_segment["text"],
+                                "new_subtitle_index": original_segment["subtitle_index"],
+                            })
+                            
+                elif new_segment is not None:
+                    # 只有新字幕片段，创建新的合并片段
+                    merged_segment = new_segment.copy()
+                    merged_segment.update({
+                        "new_start_time": new_segment["start_time"],
+                        "new_end_time": new_segment["end_time"],
+                        "new_duration": new_segment["duration"],
+                    })
+                    if new_segment["segment_type"] == "subtitle":
+                        merged_segment.update({
+                            "new_text": new_segment["text"],
+                            "new_subtitle_index": new_segment["subtitle_index"],
+                        })
+                    # 为原始信息设置默认值
+                    merged_segment["source"] = "new_only"
+                    
+                # 重新设置连续的索引
+                merged_segment["index"] = len(merged_segments)
+                merged_segments.append(merged_segment)
+                
+            self.logger.info(f"索引合并完成：原始片段 {len(original_segments)}，新片段 {len(new_segments)}，合并后 {len(merged_segments)}")
+            return merged_segments
+            
+        except Exception as e:
+            self.logger.error(f"索引合并片段失败: {str(e)}")
+            return original_segments  # 失败时返回原始片段
+
+    def _merge_short_segments_upward(
+            self,
+            segments: List[Dict[str, Any]],
+            min_duration: float = 0.3
+    ) -> List[Dict[str, Any]]:
+        """
+        对小于指定时长的片段进行向上合并（合并到前一个片段）
+        
+        Args:
+            segments: 片段列表
+            min_duration: 最小时长阈值（秒）
+            
+        Returns:
+            List[Dict[str, Any]]: 合并后的片段列表
+        """
+        try:
+            if not segments:
+                return segments
+                
+            self.logger.info(f"开始向上合并小于 {min_duration}s 的短片段")
+            
+            merged_segments = []
+            i = 0
+            
+            while i < len(segments):
+                current_segment = segments[i].copy()
+                
+                # 检查当前片段是否太短（检查原始时长和新时长）
+                original_duration = current_segment.get("duration", 0)
+                new_duration = current_segment.get("new_duration", 0)
+                
+                is_short = (original_duration < min_duration) or (new_duration < min_duration)
+                
+                if is_short and merged_segments:
+                    # 短片段合并到前一个片段
+                    prev_segment = merged_segments[-1]
+                    
+                    self.logger.debug(
+                        f"向上合并短片段 {current_segment['index']} (原始:{original_duration:.3f}s, 新:{new_duration:.3f}s) "
+                        f"到片段 {prev_segment['index']}"
+                    )
+                    
+                    # 合并原始时间信息
+                    new_start_time = min(prev_segment["start_time"], current_segment["start_time"])
+                    new_end_time = max(prev_segment["end_time"], current_segment["end_time"])
+                    new_total_duration = new_end_time - new_start_time
+                    
+                    # 合并新时间信息
+                    new_new_start_time = min(
+                        prev_segment.get("new_start_time", prev_segment["start_time"]),
+                        current_segment.get("new_start_time", current_segment["start_time"])
+                    )
+                    new_new_end_time = max(
+                        prev_segment.get("new_end_time", prev_segment["end_time"]),
+                        current_segment.get("new_end_time", current_segment["end_time"])
+                    )
+                    new_new_total_duration = new_new_end_time - new_new_start_time
+                    
+                    # 更新前一个片段
+                    prev_segment.update({
+                        "start_time": round(new_start_time, 3),
+                        "end_time": round(new_end_time, 3),
+                        "duration": round(new_total_duration, 3),
+                        "original_duration": round(new_total_duration, 3),
+                        "new_start_time": round(new_new_start_time, 3),
+                        "new_end_time": round(new_new_end_time, 3),
+                        "new_duration": round(new_new_total_duration, 3),
+                    })
+                    
+                    # 合并文本信息
+                    if current_segment.get("text") and prev_segment.get("text"):
+                        if (prev_segment["segment_type"] == "subtitle" and 
+                            current_segment["segment_type"] == "subtitle"):
+                            # 两个都是字幕片段，合并文本
+                            prev_segment["text"] = f"{prev_segment['text']} {current_segment['text']}"
+                            if (prev_segment.get("new_text") and current_segment.get("new_text")):
+                                prev_segment["new_text"] = f"{prev_segment['new_text']} {current_segment['new_text']}"
+                        else:
+                            # 更新描述文本
+                            prev_segment["text"] = f"合并片段 {new_start_time:.3f}s - {new_end_time:.3f}s"
+                    
+                    # 标记片段类型
+                    if prev_segment["segment_type"] != current_segment["segment_type"]:
+                        if (prev_segment["segment_type"] == "subtitle" or 
+                            current_segment["segment_type"] == "subtitle"):
+                            prev_segment["segment_type"] = "subtitle"  # 优先保持字幕类型
+                        else:
+                            prev_segment["segment_type"] = "merged"
+                    
+                    # 记录合并信息
+                    prev_segment["merged_from"] = prev_segment.get("merged_from", []) + [current_segment["index"]]
+                    
+                    # 更新已合并片段
+                    merged_segments[-1] = prev_segment
+                    
+                elif is_short and not merged_segments:
+                    # 第一个片段且很短，但没有前面的片段可以合并，保留它
+                    self.logger.warning(
+                        f"第一个片段 {current_segment['index']} 时长过短但无法向上合并，保留"
+                    )
+                    merged_segments.append(current_segment)
+                else:
+                    # 片段时长足够或无需合并，直接添加
+                    merged_segments.append(current_segment)
+                
+                i += 1
+            
+            # 重新分配连续的索引
+            for idx, segment in enumerate(merged_segments):
+                segment["index"] = idx
+                
+            original_count = len(segments)
+            merged_count = len(merged_segments)
+            self.logger.info(f"向上合并完成: {original_count} -> {merged_count} 个片段")
+            
+            return merged_segments
+            
+        except Exception as e:
+            self.logger.error(f"向上合并短片段失败: {str(e)}")
+            return segments  # 失败时返回原始片段列表
+
+    def _calculate_final_speed_ratios(
+            self,
+            segments: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        为所有片段计算最终的变速比例（使用高精度计算）
+        
+        Args:
+            segments: 合并后的片段列表
+            
+        Returns:
+            List[Dict[str, Any]]: 包含变速比例的片段列表
+        """
+        try:
+            if not segments:
+                return segments
+                
+            self.logger.info("开始计算最终变速比例（高精度模式）")
+            
+            speed_adjusted_segments = []
+            current_target_time = Decimal('0')  # 使用高精度累积时间戳
+            
+            for segment in segments:
+                adjusted_segment = segment.copy()
+                
+                # 获取原始时长和新时长，使用Decimal进行高精度计算
+                original_duration = Decimal(str(segment.get("original_duration", segment.get("duration", 0))))
+                new_duration = Decimal(str(segment.get("new_duration", segment.get("duration", 0))))
+                
+                # 计算变速比例
+                if new_duration > 0:
+                    speed_ratio = original_duration / new_duration
+                else:
+                    speed_ratio = Decimal('1.0') if original_duration > 0 else Decimal('0.0')
+                
+                # 设置目标时间戳（连续的时间轴）
+                target_start_time = current_target_time
+                target_end_time = current_target_time + new_duration
+                current_target_time = target_end_time
+                
+                # 转换为float并保持适当精度
+                target_start_float = float(target_start_time)
+                target_end_float = float(target_end_time)
+                new_duration_float = float(new_duration)
+                speed_ratio_float = float(speed_ratio)
+                
+                # 更新片段信息（使用6位小数精度以减少累积误差）
+                adjusted_segment.update({
+                    "target_start_time": round(target_start_float, 6),
+                    "target_end_time": round(target_end_float, 6),
+                    "target_duration": round(new_duration_float, 6),
+                    "speed_ratio": round(speed_ratio_float, 6),
+                })
+                
+                # 为字幕片段添加额外信息
+                if segment["segment_type"] == "subtitle":
+                    if segment.get("new_text"):
+                        adjusted_segment["new_subtitle_text"] = segment["new_text"]
+                    if segment.get("new_subtitle_index") is not None:
+                        adjusted_segment["target_subtitle_index"] = segment["new_subtitle_index"]
+                
+                speed_adjusted_segments.append(adjusted_segment)
+                
+                self.logger.debug(
+                    f"片段 {segment['index']} ({segment['segment_type']}): "
+                    f"原始时长 {float(original_duration):.6f}s -> 目标时长 {new_duration_float:.6f}s, "
+                    f"变速比例 {speed_ratio_float:.6f}"
+                )
+            
+            final_duration = float(current_target_time)
+            self.logger.info(f"变速比例计算完成，共处理 {len(speed_adjusted_segments)} 个片段")
+            self.logger.info(f"最终视频目标时长: {final_duration:.6f}s")
+            
+            return speed_adjusted_segments
+            
+        except Exception as e:
+            self.logger.error(f"计算变速比例失败: {str(e)}")
+            return segments  # 失败时返回原始片段列表
 
     def _generate_default_video_output_path(self, video_path: str) -> str:
         """生成默认的视频输出路径"""
