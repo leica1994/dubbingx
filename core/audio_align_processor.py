@@ -1458,9 +1458,17 @@ class AudioAlignProcessor:
             )
             
             if result.returncode == 0 and result.stdout.strip():
-                actual_duration = float(result.stdout.strip())
-                self.logger.debug(f"获取到实际视频时长: {actual_duration:.6f}s")
-                return actual_duration
+                duration_str = result.stdout.strip()
+                if duration_str.lower() in ['n/a', 'na', '']:
+                    self.logger.warning(f"ffprobe返回无效时长: {duration_str}")
+                    return 0.0
+                try:
+                    actual_duration = float(duration_str)
+                    self.logger.debug(f"获取到实际视频时长: {actual_duration:.6f}s")
+                    return actual_duration
+                except ValueError:
+                    self.logger.warning(f"无法解析视频时长: {duration_str}")
+                    return 0.0
             else:
                 self.logger.warning(f"无法获取视频时长: {result.stderr}")
                 return 0.0
@@ -1489,7 +1497,15 @@ class AudioAlignProcessor:
             )
 
             if result.returncode == 0:
-                return float(result.stdout.strip())
+                duration_str = result.stdout.strip()
+                if duration_str.lower() in ['n/a', 'na', '']:
+                    self.logger.error(f"ffprobe返回无效时长: {duration_str}")
+                    return 0.0
+                try:
+                    return float(duration_str)
+                except ValueError:
+                    self.logger.error(f"无法解析视频时长: {duration_str}")
+                    return 0.0
             else:
                 self.logger.error(f"获取视频时长失败: {result.stderr}")
                 return 0.0
@@ -2606,11 +2622,83 @@ class AudioAlignProcessor:
                     merged_segments[-1] = prev_segment
                     
                 elif is_short and not merged_segments:
-                    # 第一个片段且很短，但没有前面的片段可以合并，保留它
-                    self.logger.warning(
-                        f"第一个片段 {current_segment['index']} 时长过短但无法向上合并，保留"
-                    )
-                    merged_segments.append(current_segment)
+                    # 第一个片段且很短，检查是否可以向下合并到第二个片段
+                    if i + 1 < len(segments):
+                        next_segment = segments[i + 1]
+                        
+                        self.logger.debug(
+                            f"第一个片段 {current_segment['index']} 时长过短 (原始:{original_duration:.3f}s, 新:{new_duration:.3f}s)，"
+                            f"尝试向下合并到片段 {next_segment['index']}"
+                        )
+                        
+                        # 合并当前片段到下一个片段
+                        merged_first_segment = next_segment.copy()
+                        
+                        # 合并原始时间信息
+                        new_start_time = min(current_segment["start_time"], next_segment["start_time"])
+                        new_end_time = max(current_segment["end_time"], next_segment["end_time"])
+                        new_total_duration = new_end_time - new_start_time
+                        
+                        # 合并新时间信息
+                        new_new_start_time = min(
+                            current_segment.get("new_start_time", current_segment["start_time"]),
+                            next_segment.get("new_start_time", next_segment["start_time"])
+                        )
+                        new_new_end_time = max(
+                            current_segment.get("new_end_time", current_segment["end_time"]),
+                            next_segment.get("new_end_time", next_segment["end_time"])
+                        )
+                        new_new_total_duration = new_new_end_time - new_new_start_time
+                        
+                        # 更新合并后的片段
+                        merged_first_segment.update({
+                            "index": 0,  # 保持为第一个片段
+                            "start_time": round(new_start_time, 8),
+                            "end_time": round(new_end_time, 8),
+                            "duration": round(new_total_duration, 8),
+                            "original_duration": round(new_total_duration, 8),
+                            "new_start_time": round(new_new_start_time, 8),
+                            "new_end_time": round(new_new_end_time, 8),
+                            "new_duration": round(new_new_total_duration, 8),
+                        })
+                        
+                        # 合并文本信息
+                        if current_segment.get("text") and next_segment.get("text"):
+                            if (current_segment["segment_type"] == "subtitle" and 
+                                next_segment["segment_type"] == "subtitle"):
+                                # 两个都是字幕片段，合并文本
+                                merged_first_segment["text"] = f"{current_segment['text']} {next_segment['text']}"
+                                if (current_segment.get("new_text") and next_segment.get("new_text")):
+                                    merged_first_segment["new_text"] = f"{current_segment['new_text']} {next_segment['new_text']}"
+                            else:
+                                # 更新描述文本
+                                merged_first_segment["text"] = f"合并片段 {new_start_time:.3f}s - {new_end_time:.3f}s"
+                        
+                        # 标记片段类型
+                        if current_segment["segment_type"] != next_segment["segment_type"]:
+                            if (current_segment["segment_type"] == "subtitle" or 
+                                next_segment["segment_type"] == "subtitle"):
+                                merged_first_segment["segment_type"] = "subtitle"  # 优先保持字幕类型
+                            else:
+                                merged_first_segment["segment_type"] = "merged"
+                        
+                        # 记录合并信息
+                        merged_first_segment["merged_from"] = [current_segment["index"], next_segment["index"]]
+                        
+                        merged_segments.append(merged_first_segment)
+                        
+                        # 跳过下一个片段，因为已经合并了
+                        i += 1
+                        
+                        self.logger.info(
+                            f"第一个短片段 {current_segment['index']} 已向下合并到片段 {next_segment['index']}"
+                        )
+                    else:
+                        # 只有一个片段且很短，保留它
+                        self.logger.warning(
+                            f"第一个片段 {current_segment['index']} 时长过短且无其他片段可合并，保留"
+                        )
+                        merged_segments.append(current_segment)
                 else:
                     # 片段时长足够或无需合并，直接添加
                     merged_segments.append(current_segment)
