@@ -1315,6 +1315,23 @@ class AudioAlignProcessor:
 
         if cache_files["completed"].exists():
             self.logger.info("拼接步骤已完成，跳过拼接处理")
+            
+            # 加载已完成缓存的详细信息，确保包含最终视频路径
+            cached_result = self._load_step_cache(
+                cache_files["completed"],
+                silent_video_path,
+                processing_result.get("original_srt_path", ""),
+                processing_result.get("new_srt_path", ""),
+            )
+            
+            if cached_result and cached_result.get("final_video_path"):
+                # 从缓存中恢复最终视频路径信息
+                processing_result["final_video_path"] = cached_result["final_video_path"]
+                processing_result["final_video_duration"] = cached_result.get("final_video_duration", 0)
+                processing_result["concatenation_success"] = cached_result.get("concatenation_success", True)
+                self.logger.info(f"从缓存恢复最终视频路径: {processing_result['final_video_path']}")
+            else:
+                self.logger.warning("缓存文件中未找到最终视频路径信息")
         elif updated_segments and any(
                 seg.get("speed_processing_success", False)
                 for seg in updated_segments
