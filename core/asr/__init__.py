@@ -4,7 +4,7 @@ ASR (Automatic Speech Recognition) 模块
 基于WhisperX的语音识别模块，专注于音频到文字的转换
 """
 
-from .simple_asr import VoiceRecognizer, recognize_audio, audio_to_prompt
+from .whisper_asr import VoiceRecognizer, recognize_audio, audio_to_prompt
 from .config import ASRConfig
 
 __all__ = ['VoiceRecognizer', 'recognize_audio', 'audio_to_prompt', 'ASRConfig']
