@@ -2,30 +2,30 @@
 name = "dubbingx"
 version = "0.1.0"
 description = "智能视频配音系统，支持GPU加速和声音克隆"
-authors = [{name = "DubbingX Team", email = "team@dubbingx.com"}]
+authors = [{ name = "DubbingX Team", email = "team@dubbingx.com" }]
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
-license = {text = "MIT"}
+license = { text = "MIT" }
 
 dependencies = [
     # PyTorch生态系统
     "torch",
     "torchaudio",
     "torchvision",
-    
     # AI模型
     "demucs",
-    
     # 音频处理
     "librosa",
     "soundfile",
     "numpy",
-    
     # 视频处理
     "ffmpeg-python",
-    
     # TTS集成
     "gradio-client",
+    # 语音识别
+    "faster-whisper",
+    # 模型下载
+    "modelscope",
 ]
 
 [build-system]
