@@ -29,7 +29,7 @@ class TTSEngineType(Enum):
         """获取默认API URL"""
         default_urls = {
             TTSEngineType.INDEX_TTS: "http://127.0.0.1:7860",
-            TTSEngineType.COSYVOICE: "https://d08041542-cosyvoicev200-1294-tlmllxzd-7860.550c.cloud"
+            TTSEngineType.COSYVOICE: "http://127.0.0.1:7860"
         }
         return default_urls.get(self, "")
     
