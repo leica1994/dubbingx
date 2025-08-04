@@ -12,6 +12,7 @@ from core.audio_align_processor import (
     generate_aligned_srt,
     process_video_speed_adjustment
 )
+from core.subtitle.subtitle_processor import convert_subtitle, sync_srt_timestamps_to_ass
 
 
 class DubbingPipeline:
@@ -481,11 +482,45 @@ class DubbingPipeline:
             # 6. 生成对齐字幕
             if not self._check_step_completed(cache_data, 'generate_aligned_srt'):
                 self.logger.info("步骤6: 生成对齐字幕")
+                
+                # 生成对齐后的SRT字幕
                 generate_aligned_srt(
                     str(paths['aligned_results']),
                     str(paths['processed_subtitle']),
                     str(paths['aligned_srt'])
                 )
+                
+                # 检查原始字幕格式，如果不是SRT则需要转换为相应格式
+                original_subtitle_path = str(paths['subtitle_path'])
+                original_subtitle_ext = Path(original_subtitle_path).suffix.lower()
+                
+                if original_subtitle_ext != '.srt':
+                    self.logger.info(f"检测到原始字幕格式为 {original_subtitle_ext}，正在转换...")
+                    
+                    if original_subtitle_ext == '.ass':
+                        # 对于ASS格式，使用sync_srt_timestamps_to_ass方法同步时间戳
+                        aligned_ass_path = paths['output_dir'] / f"{Path(video_path).stem}_aligned.ass"
+                        sync_success = sync_srt_timestamps_to_ass(
+                            original_subtitle_path,
+                            str(paths['aligned_srt']),
+                            str(aligned_ass_path)
+                        )
+                        if sync_success:
+                            self.logger.info(f"ASS字幕时间戳同步完成: {aligned_ass_path}")
+                        else:
+                            self.logger.error("ASS字幕时间戳同步失败")
+                    else:
+                        # 对于其他格式，使用convert_subtitle转换
+                        aligned_subtitle_path = paths['output_dir'] / f"{Path(video_path).stem}_aligned{original_subtitle_ext}"
+                        convert_success = convert_subtitle(
+                            str(paths['aligned_srt']),
+                            str(aligned_subtitle_path)
+                        )
+                        if convert_success:
+                            self.logger.info(f"字幕格式转换完成: {aligned_subtitle_path}")
+                        else:
+                            self.logger.error("字幕格式转换失败")
+                
                 self._mark_step_completed(cache_data, 'generate_aligned_srt')
                 self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
             else:
