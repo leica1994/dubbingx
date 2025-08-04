@@ -14,8 +14,8 @@ def main():
     pipeline = DubbingPipeline()
 
     # 处理单个视频
-    video_path = r'F:\交易\价格行为分析\6.阿布交易室\Brooks Price Action Best Trades\2.主要趋势反转\6.Look for swing trades.mp4'
-    subtitle_path = r'F:\交易\价格行为分析\6.阿布交易室\Brooks Price Action Best Trades\2.主要趋势反转\6.Look for swing trades.vtt'
+    video_path = r'C:\Users\leica\Desktop\1\13. 日线图、周线图和月线图.mp4'
+    subtitle_path = r'C:\Users\leica\Desktop\1\13. 日线图、周线图和月线图.ass'
 
     print(f"开始处理视频: {video_path}")
     print(f"字幕文件: {subtitle_path}")

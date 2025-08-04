@@ -1,18 +1,244 @@
 import json
 import logging
-import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
-from core.media_processor import MediaProcessor, merge_audio_video, generate_reference_audio, separate_media
-from core.subtitle_preprocessor import SubtitlePreprocessor, preprocess_subtitle
-from core.tts_processor import TTSProcessor, generate_tts_from_reference
+from core.media_processor import merge_audio_video, generate_reference_audio, separate_media
+from core.subtitle_preprocessor import preprocess_subtitle
+from core.tts_processor import generate_tts_from_reference
 from core.audio_align_processor import (
     align_audio_with_subtitles,
     generate_aligned_srt,
     process_video_speed_adjustment
 )
 from core.subtitle.subtitle_processor import convert_subtitle, sync_srt_timestamps_to_ass
+
+
+class DubbingPaths:
+    """配音文件路径管理类"""
+
+    def __init__(self, video_path: str, subtitle_path: Optional[str] = None, output_dir: Optional[Path] = None):
+        """
+        初始化配音路径管理器
+        
+        Args:
+            video_path: 视频文件路径
+            subtitle_path: 字幕文件路径，如果为None则自动匹配同名字幕文件
+            output_dir: 输出目录路径，如果为None则使用视频父目录下的outputs
+        """
+        self.video_path = Path(video_path)
+        self.video_name = self.video_path.stem
+
+        # 处理字幕文件路径
+        if subtitle_path:
+            self.subtitle_path = Path(subtitle_path)
+        else:
+            # 自动匹配同名字幕文件
+            self.subtitle_path = self._find_matching_subtitle()
+
+        if output_dir:
+            self.output_dir = output_dir
+        else:
+            # 使用视频父目录下的outputs目录，并在其下创建文件名目录
+            video_parent = self.video_path.parent
+            outputs_dir = video_parent / "outputs"
+            outputs_dir.mkdir(exist_ok=True)
+
+            # 清理文件名并创建子目录
+            clean_video_name = self._sanitize_filename(self.video_name)
+            self.output_dir = outputs_dir / clean_video_name
+            self.output_dir.mkdir(exist_ok=True)
+
+        # 初始化所有路径
+        self._initialize_paths()
+
+    def _find_matching_subtitle(self) -> Path:
+        """自动匹配同名字幕文件"""
+        video_dir = self.video_path.parent
+        video_name = self.video_name
+
+        # 常见的字幕文件扩展名
+        subtitle_extensions = ['.srt', '.ass', '.ssa', '.sub', '.vtt']
+
+        for ext in subtitle_extensions:
+            subtitle_file = video_dir / f"{video_name}{ext}"
+            if subtitle_file.exists():
+                return subtitle_file
+
+        # 如果没有找到，尝试模糊匹配
+        for file in video_dir.glob(f"{video_name}*"):
+            if file.suffix.lower() in subtitle_extensions:
+                return file
+
+        # 如果仍然没有找到，抛出异常
+        raise FileNotFoundError(f"无法找到与视频 {self.video_name} 匹配的字幕文件")
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """清理文件名，将不支持的字符转为下划线"""
+        # 替换Windows和Linux不支持的特殊字符
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        # 替换其他可能引起问题的字符
+        sanitized = re.sub(r'[@#&%=+]', '_', sanitized)
+        # 替换空格为下划线
+        sanitized = sanitized.replace(' ', '_')
+        # 替换连续的下划线为单个下划线
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # 去除开头和结尾的下划线
+        sanitized = sanitized.strip('_')
+        # 确保文件名不为空
+        if not sanitized:
+            sanitized = "unnamed"
+        return sanitized
+
+    def _initialize_paths(self):
+        """初始化所有文件路径"""
+        # 为分离后的媒体文件创建子目录
+        self._media_separation_dir = self.output_dir / "media_separation"
+        
+        # 初始化所有文件路径
+        self._processed_subtitle = self.output_dir / f"{self.video_name}_processed.srt"
+        self._vocal_audio = self._media_separation_dir / f"{self.video_name}_vocal.wav"
+        self._background_audio = self._media_separation_dir / f"{self.video_name}_background.wav"
+        self._silent_video = self._media_separation_dir / f"{self.video_name}_silent.mp4"
+        self._reference_audio_dir = self.output_dir / "reference_audio"
+        self._tts_output_dir = self.output_dir / "tts_output"
+        self._aligned_audio_dir = self.output_dir / "aligned_audio"
+        self._adjusted_video_dir = self.output_dir / "adjusted_video"
+        self._reference_results = self._reference_audio_dir / f"{self.video_name}_vocal_reference_audio_results.json"
+        self._tts_results = self._tts_output_dir / "tts_generation_results.json"
+        self._aligned_results = self._aligned_audio_dir / "aligned_tts_generation_results.json"
+        self._aligned_audio = self._aligned_audio_dir / "aligned_tts_generation_results.wav"
+        self._aligned_srt = self._aligned_audio_dir / "aligned_tts_generation_aligned.srt"
+        self._final_video = self.output_dir / f"{self.video_name}_dubbed.mp4"
+        self._speed_adjusted_video = self._adjusted_video_dir / f"final_speed_adjusted_{self.video_name}_silent.mp4"
+        self._pipeline_cache = self.output_dir / f"{self.video_name}_pipeline_cache.json"
+
+        # 创建必要的子目录
+        for dir_path in [self._media_separation_dir, self._reference_audio_dir, self._tts_output_dir, 
+                         self._aligned_audio_dir, self._adjusted_video_dir]:
+            dir_path.mkdir(exist_ok=True)
+
+    # 属性访问器
+    @property
+    def processed_subtitle(self) -> Path:
+        return self._processed_subtitle
+
+    @property
+    def vocal_audio(self) -> Path:
+        return self._vocal_audio
+
+    @property
+    def background_audio(self) -> Path:
+        return self._background_audio
+
+    @property
+    def silent_video(self) -> Path:
+        return self._silent_video
+
+    @property
+    def media_separation_dir(self) -> Path:
+        return self._media_separation_dir
+    
+    @property
+    def reference_audio_dir(self) -> Path:
+        return self._reference_audio_dir
+
+    @property
+    def tts_output_dir(self) -> Path:
+        return self._tts_output_dir
+
+    @property
+    def aligned_audio_dir(self) -> Path:
+        return self._aligned_audio_dir
+
+    @property
+    def adjusted_video_dir(self) -> Path:
+        return self._adjusted_video_dir
+
+    @property
+    def reference_results(self) -> Path:
+        return self._reference_results
+
+    @property
+    def tts_results(self) -> Path:
+        return self._tts_results
+
+    @property
+    def aligned_results(self) -> Path:
+        return self._aligned_results
+
+    @property
+    def aligned_audio(self) -> Path:
+        return self._aligned_audio
+
+    @property
+    def aligned_srt(self) -> Path:
+        return self._aligned_srt
+
+    @property
+    def final_video(self) -> Path:
+        return self._final_video
+
+    @property
+    def speed_adjusted_video(self) -> Path:
+        return self._speed_adjusted_video
+
+    @property
+    def pipeline_cache(self) -> Path:
+        return self._pipeline_cache
+
+    # Get方法
+    def get_processed_subtitle(self) -> Path:
+        return self._processed_subtitle
+
+    def get_vocal_audio(self) -> Path:
+        return self._vocal_audio
+
+    def get_background_audio(self) -> Path:
+        return self._background_audio
+
+    def get_silent_video(self) -> Path:
+        return self._silent_video
+    
+    def get_media_separation_dir(self) -> Path:
+        return self._media_separation_dir
+
+    def get_reference_audio_dir(self) -> Path:
+        return self._reference_audio_dir
+
+    def get_tts_output_dir(self) -> Path:
+        return self._tts_output_dir
+
+    def get_aligned_audio_dir(self) -> Path:
+        return self._aligned_audio_dir
+
+    def get_adjusted_video_dir(self) -> Path:
+        return self._adjusted_video_dir
+
+    def get_reference_results(self) -> Path:
+        return self._reference_results
+
+    def get_tts_results(self) -> Path:
+        return self._tts_results
+
+    def get_aligned_results(self) -> Path:
+        return self._aligned_results
+
+    def get_aligned_audio(self) -> Path:
+        return self._aligned_audio
+
+    def get_aligned_srt(self) -> Path:
+        return self._aligned_srt
+
+    def get_final_video(self) -> Path:
+        return self._final_video
+
+    def get_speed_adjusted_video(self) -> Path:
+        return self._speed_adjusted_video
+
+    def get_pipeline_cache(self) -> Path:
+        return self._pipeline_cache
 
 
 class DubbingPipeline:
@@ -28,51 +254,9 @@ class DubbingPipeline:
         self.logger = logging.getLogger(__name__)
         self.output_dir = Path(output_dir) if output_dir else None
 
-    def _get_output_dir(self, video_path: str) -> Path:
-        """获取输出目录"""
-        if self.output_dir:
-            return self.output_dir
-
-        # 使用视频父目录下的outputs目录
-        video_parent = Path(video_path).parent
-        output_dir = video_parent / "outputs"
-        output_dir.mkdir(exist_ok=True)
-        return output_dir
-
-    def _get_file_paths(self, video_path: str, subtitle_path: str) -> Dict[str, Path]:
+    def _get_file_paths(self, video_path: str, subtitle_path: Optional[str] = None) -> DubbingPaths:
         """生成所有需要的文件路径"""
-        output_dir = self._get_output_dir(video_path)
-        video_name = Path(video_path).stem
-
-        paths = {
-            'output_dir': output_dir,
-            'video_path': Path(video_path),
-            'subtitle_path': Path(subtitle_path),
-            'processed_subtitle': output_dir / f"{video_name}_processed.srt",
-            'vocal_audio': output_dir / f"{video_name}_vocal.wav",
-            'background_audio': output_dir / f"{video_name}_background.wav",
-            'silent_video': output_dir / f"{video_name}_silent.mp4",
-            'reference_audio_dir': output_dir / "reference_audio",
-            'tts_output_dir': output_dir / "tts_output",
-            'aligned_audio_dir': output_dir / "aligned_audio",
-            'adjusted_video_dir': output_dir / "adjusted_video",
-            'reference_results': output_dir / "reference_audio" / f"{video_name}_vocal_reference_audio_results.json",
-            'tts_results': output_dir / "tts_output" / "tts_generation_results.json",
-            'aligned_results': output_dir / "aligned_audio" / "aligned_tts_generation_results.json",
-            'aligned_audio': output_dir / "aligned_audio" / "aligned_tts_generation_results.wav",
-            'aligned_srt': output_dir / "aligned_audio" / "aligned_tts_generation_aligned.srt",
-            'final_video': output_dir / f"{video_name}_dubbed.mp4",
-            'speed_adjusted_video': output_dir / "adjusted_video" / f"final_speed_adjusted_{video_name}_silent.mp4"
-        }
-
-        # 创建必要的子目录
-        for dir_path in ['reference_audio_dir', 'tts_output_dir', 'aligned_audio_dir', 'adjusted_video_dir']:
-            paths[dir_path].mkdir(exist_ok=True)
-
-        # 添加缓存文件路径
-        paths['pipeline_cache'] = output_dir / f"{video_name}_pipeline_cache.json"
-
-        return paths
+        return DubbingPaths(video_path, subtitle_path, self.output_dir)
 
     def cleanup_large_cache_file(self, video_path: str) -> Dict[str, Any]:
         """
@@ -85,16 +269,16 @@ class DubbingPipeline:
             清理结果
         """
         try:
-            paths = self._get_file_paths(video_path, "")
-            cache_file = paths['pipeline_cache']
-            
+            paths = self._get_file_paths(video_path)
+            cache_file = paths.pipeline_cache
+
             if not cache_file.exists():
                 return {
                     'success': True,
                     'message': '缓存文件不存在',
                     'cache_file': str(cache_file)
                 }
-            
+
             # 检查文件大小
             file_size = cache_file.stat().st_size
             if file_size < 1024 * 1024:  # 小于1MB，不需要清理
@@ -104,9 +288,9 @@ class DubbingPipeline:
                     'cache_file': str(cache_file),
                     'file_size': file_size
                 }
-            
+
             self.logger.info(f"检测到过大的缓存文件: {file_size} bytes，开始优化...")
-            
+
             # 加载现有缓存
             old_cache = self._load_pipeline_cache(cache_file)
             if not old_cache:
@@ -115,11 +299,11 @@ class DubbingPipeline:
                     'message': '无法加载现有缓存',
                     'cache_file': str(cache_file)
                 }
-            
+
             # 备份旧缓存
             backup_file = cache_file.with_suffix('.json.backup')
             cache_file.rename(backup_file)
-            
+
             # 重新创建优化后的缓存
             new_cache = {
                 'video_path': old_cache.get('video_path'),
@@ -132,29 +316,29 @@ class DubbingPipeline:
                 'cache_optimized': True,
                 'original_size': file_size
             }
-            
+
             # 重新处理已完成步骤的结果
             completed_steps = old_cache.get('completed_steps', {})
             for step_name, step_data in completed_steps.items():
                 if step_data.get('completed', False):
                     # 优化步骤结果
                     optimized_result = self._optimize_result_for_cache(step_name, step_data.get('result'))
-                    
+
                     new_cache['completed_steps'][step_name] = {
                         'completed': True,
                         'completed_at': step_data.get('completed_at'),
                         'result': optimized_result
                     }
-            
+
             # 保存优化后的缓存
             self._save_pipeline_cache(cache_file, new_cache)
-            
+
             # 检查新文件大小
             new_size = cache_file.stat().st_size
             saved_space = file_size - new_size
-            
+
             self.logger.info(f"缓存优化完成: {file_size} -> {new_size} bytes (节省 {saved_space} bytes)")
-            
+
             return {
                 'success': True,
                 'message': f'缓存优化完成，节省 {saved_space} bytes',
@@ -164,7 +348,7 @@ class DubbingPipeline:
                 'saved_space': saved_space,
                 'backup_file': str(backup_file)
             }
-            
+
         except Exception as e:
             self.logger.error(f"清理缓存文件失败: {str(e)}")
             return {
@@ -184,13 +368,13 @@ class DubbingPipeline:
                 cache_data = json.load(f)
 
             self.logger.info(f"找到缓存文件: {cache_path}")
-            
+
             # 验证缓存数据结构
             if not self._validate_cache_structure(cache_data):
                 self.logger.warning("缓存数据结构无效，将删除损坏的缓存文件")
                 cache_path.unlink()
                 return None
-            
+
             return cache_data
         except json.JSONDecodeError as e:
             self.logger.warning(f"缓存文件JSON格式错误: {str(e)}")
@@ -214,29 +398,29 @@ class DubbingPipeline:
                 if field not in cache_data:
                     self.logger.warning(f"缓存缺少必需字段: {field}")
                     return False
-            
+
             # 检查completed_steps结构
             completed_steps = cache_data.get('completed_steps', {})
             if not isinstance(completed_steps, dict):
                 self.logger.warning("缓存中的completed_steps不是字典类型")
                 return False
-            
+
             # 检查每个步骤的数据结构
             for step_name, step_data in completed_steps.items():
                 if not isinstance(step_data, dict):
                     self.logger.warning(f"步骤 {step_name} 的数据不是字典类型")
                     return False
-                
+
                 if not step_data.get('completed', False):
                     continue
-                
+
                 # 检查必需的时间字段
                 if 'completed_at' not in step_data:
                     self.logger.warning(f"步骤 {step_name} 缺少completed_at字段")
                     return False
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.warning(f"验证缓存结构时发生错误: {str(e)}")
             return False
@@ -245,10 +429,10 @@ class DubbingPipeline:
         """保存流水线缓存"""
         try:
             cache_data['updated_at'] = datetime.now().isoformat()
-            
+
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
-            
+
             self.logger.info(f"缓存已保存: {cache_path}")
             return True
         except Exception as e:
@@ -263,10 +447,10 @@ class DubbingPipeline:
         """标记指定步骤为已完成"""
         if 'completed_steps' not in cache_data:
             cache_data['completed_steps'] = {}
-        
+
         # 优化缓存数据，只存储必要信息
         optimized_result = self._optimize_result_for_cache(step_name, result)
-        
+
         cache_data['completed_steps'][step_name] = {
             'completed': True,
             'completed_at': datetime.now().isoformat(),
@@ -277,15 +461,15 @@ class DubbingPipeline:
         """优化结果数据以减少缓存大小"""
         if not result:
             return {}
-        
+
         optimized = {'success': result.get('success', False)}
-        
+
         if step_name == 'preprocess_subtitle':
             # 只存储处理后的字幕文件路径，不存储完整的字幕条目
             if result.get('result') and result['result'].get('processed_subtitle_path'):
                 optimized['processed_subtitle_path'] = result['result']['processed_subtitle_path']
                 optimized['entries_count'] = len(result['result'].get('subtitle_entries', []))
-        
+
         elif step_name == 'separate_media':
             # 只存储分离后的文件路径
             if result.get('result'):
@@ -294,7 +478,7 @@ class DubbingPipeline:
                     'vocal_audio_path': result['result'].get('vocal_audio_path'),
                     'background_audio_path': result['result'].get('background_audio_path')
                 })
-        
+
         elif step_name == 'generate_reference_audio':
             # 只存储关键信息，不存储完整的音频片段信息
             if result.get('result'):
@@ -303,7 +487,7 @@ class DubbingPipeline:
                     'total_segments': result['result'].get('total_segments', 0),
                     'success': result['result'].get('success', False)
                 })
-        
+
         elif step_name == 'generate_tts':
             # 只存储TTS生成结果的关键信息
             if result.get('result'):
@@ -312,7 +496,7 @@ class DubbingPipeline:
                     'total_segments': result['result'].get('total_segments', 0),
                     'failed_segments': result['result'].get('failed_segments', 0)
                 })
-        
+
         elif step_name == 'align_audio':
             # 只存储对齐结果的关键信息
             if result.get('result'):
@@ -321,11 +505,11 @@ class DubbingPipeline:
                     'total_duration': result['result'].get('total_duration', 0),
                     'segments_count': result['result'].get('segments_count', 0)
                 })
-        
+
         else:
             # 对于其他步骤，只存储成功状态
             optimized['success'] = result.get('success', False)
-        
+
         return optimized
 
     def _validate_step_dependencies(self, cache_data: Dict[str, Any], step_name: str) -> bool:
@@ -336,9 +520,12 @@ class DubbingPipeline:
             'generate_reference_audio': ['preprocess_subtitle', 'separate_media'],
             'generate_tts': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio'],
             'align_audio': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio', 'generate_tts'],
-            'generate_aligned_srt': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio', 'generate_tts', 'align_audio'],
-            'process_video_speed': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio', 'generate_tts', 'align_audio', 'generate_aligned_srt'],
-            'merge_audio_video': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio', 'generate_tts', 'align_audio', 'generate_aligned_srt', 'process_video_speed']
+            'generate_aligned_srt': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio',
+                                     'generate_tts', 'align_audio'],
+            'process_video_speed': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio', 'generate_tts',
+                                    'align_audio', 'generate_aligned_srt'],
+            'merge_audio_video': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio', 'generate_tts',
+                                  'align_audio', 'generate_aligned_srt', 'process_video_speed']
         }
 
         dependencies = step_dependencies.get(step_name, [])
@@ -346,16 +533,17 @@ class DubbingPipeline:
             if not self._check_step_completed(cache_data, dep):
                 self.logger.warning(f"步骤 {step_name} 的依赖 {dep} 未完成")
                 return False
-        
+
         return True
 
-    def process_video(self, video_path: str, subtitle_path: str, resume_from_cache: bool = True) -> Dict[str, Any]:
+    def process_video(self, video_path: str, subtitle_path: Optional[str] = None, resume_from_cache: bool = True) -> \
+    Dict[str, Any]:
         """
         处理视频配音的完整流程
         
         Args:
             video_path: 视频文件路径
-            subtitle_path: 字幕文件路径
+            subtitle_path: 字幕文件路径,默认为空,自动匹配同名字幕
             resume_from_cache: 是否从缓存恢复，默认为True
             
         Returns:
@@ -371,11 +559,31 @@ class DubbingPipeline:
             # 初始化缓存
             cache_data = {
                 'video_path': video_path,
-                'subtitle_path': subtitle_path,
-                'output_dir': str(paths['output_dir']),
+                'subtitle_path': str(paths.subtitle_path),
+                'output_dir': str(paths.output_dir),
                 'created_at': datetime.now().isoformat(),
                 'completed_steps': {},
-                'file_paths': {k: str(v) for k, v in paths.items() if k != 'output_dir'}
+                'file_paths': {
+                    'video_path': str(paths.video_path),
+                    'subtitle_path': str(paths.subtitle_path),
+                    'processed_subtitle': str(paths.processed_subtitle),
+                    'vocal_audio': str(paths.vocal_audio),
+                    'background_audio': str(paths.background_audio),
+                    'silent_video': str(paths.silent_video),
+                    'media_separation_dir': str(paths.media_separation_dir),
+                    'reference_audio_dir': str(paths.reference_audio_dir),
+                    'tts_output_dir': str(paths.tts_output_dir),
+                    'aligned_audio_dir': str(paths.aligned_audio_dir),
+                    'adjusted_video_dir': str(paths.adjusted_video_dir),
+                    'reference_results': str(paths.reference_results),
+                    'tts_results': str(paths.tts_results),
+                    'aligned_results': str(paths.aligned_results),
+                    'aligned_audio': str(paths.aligned_audio),
+                    'aligned_srt': str(paths.aligned_srt),
+                    'final_video': str(paths.final_video),
+                    'speed_adjusted_video': str(paths.speed_adjusted_video),
+                    'pipeline_cache': str(paths.pipeline_cache)
+                }
             }
 
             # 检查和修复缓存
@@ -384,9 +592,9 @@ class DubbingPipeline:
                 # 自动检查和修复缓存
                 repair_result = self.check_and_repair_cache(video_path)
                 self.logger.info(f"缓存检查结果: {repair_result['message']}")
-                
+
                 if repair_result.get('cache_exists'):
-                    existing_cache = self._load_pipeline_cache(paths['pipeline_cache'])
+                    existing_cache = self._load_pipeline_cache(paths.pipeline_cache)
                     if existing_cache:
                         cache_data = existing_cache
                         self.logger.info("使用缓存继续处理")
@@ -400,18 +608,18 @@ class DubbingPipeline:
             # 1. 预处理字幕
             if not self._check_step_completed(cache_data, 'preprocess_subtitle'):
                 self.logger.info("步骤1: 预处理字幕")
-                preprocess_result = preprocess_subtitle(str(paths['subtitle_path']), str(paths['output_dir']))
+                preprocess_result = preprocess_subtitle(str(paths.subtitle_path), str(paths.output_dir))
                 self._mark_step_completed(cache_data, 'preprocess_subtitle', {'result': preprocess_result})
-                self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
+                self._save_pipeline_cache(paths.pipeline_cache, cache_data)
             else:
                 self.logger.info("步骤1: 预处理字幕 (已完成，跳过)")
 
             # 2. 分离媒体文件
             if not self._check_step_completed(cache_data, 'separate_media'):
                 self.logger.info("步骤2: 分离音视频")
-                separate_result = separate_media(str(paths['video_path']), str(paths['output_dir']))
+                separate_result = separate_media(str(paths.video_path), str(paths.media_separation_dir))
                 self._mark_step_completed(cache_data, 'separate_media', {'result': separate_result})
-                self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
+                self._save_pipeline_cache(paths.pipeline_cache, cache_data)
             else:
                 self.logger.info("步骤2: 分离音视频 (已完成，跳过)")
 
@@ -419,31 +627,31 @@ class DubbingPipeline:
             if not self._check_step_completed(cache_data, 'generate_reference_audio'):
                 self.logger.info("步骤3: 生成参考音频")
                 ref_result = generate_reference_audio(
-                    str(paths['vocal_audio']),
-                    str(paths['processed_subtitle']),
-                    str(paths['reference_audio_dir'])
+                    str(paths.vocal_audio),
+                    str(paths.processed_subtitle),
+                    str(paths.reference_audio_dir)
                 )
                 self._mark_step_completed(cache_data, 'generate_reference_audio', {'result': ref_result})
-                self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
+                self._save_pipeline_cache(paths.pipeline_cache, cache_data)
             else:
                 self.logger.info("步骤3: 生成参考音频 (已完成，跳过)")
 
             # 4. 生成TTS音频
             if not self._check_step_completed(cache_data, 'generate_tts'):
                 self.logger.info("步骤4: 生成TTS音频")
-                self.logger.info(f"参考结果文件: {paths['reference_results']}")
-                self.logger.info(f"输出目录: {paths['tts_output_dir']}")
+                self.logger.info(f"参考结果文件: {paths.reference_results}")
+                self.logger.info(f"输出目录: {paths.tts_output_dir}")
 
                 # 检查参考结果文件是否存在
-                if not paths['reference_results'].exists():
-                    self.logger.error(f"参考结果文件不存在: {paths['reference_results']}")
+                if not paths.reference_results.exists():
+                    self.logger.error(f"参考结果文件不存在: {paths.reference_results}")
                     return {
                         'success': False,
                         'message': '参考结果文件不存在',
-                        'error': f'文件不存在: {paths["reference_results"]}'
+                        'error': f'文件不存在: {paths.reference_results}'
                     }
 
-                tts_result = generate_tts_from_reference(str(paths['reference_results']), str(paths['tts_output_dir']))
+                tts_result = generate_tts_from_reference(str(paths.reference_results), str(paths.tts_output_dir))
                 self.logger.info(f"TTS生成结果: {tts_result}")
 
                 if not tts_result.get('success', False):
@@ -455,7 +663,7 @@ class DubbingPipeline:
                     }
 
                 self._mark_step_completed(cache_data, 'generate_tts', {'result': tts_result})
-                self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
+                self._save_pipeline_cache(paths.pipeline_cache, cache_data)
             else:
                 self.logger.info("步骤4: 生成TTS音频 (已完成，跳过)")
 
@@ -463,46 +671,46 @@ class DubbingPipeline:
             if not self._check_step_completed(cache_data, 'align_audio'):
                 self.logger.info("步骤5: 音频对齐")
                 align_result = align_audio_with_subtitles(
-                    tts_results_path=str(paths['tts_results']),
-                    srt_path=str(paths['processed_subtitle']),
-                    output_path=str(paths['aligned_audio'])
+                    tts_results_path=str(paths.tts_results),
+                    srt_path=str(paths.processed_subtitle),
+                    output_path=str(paths.aligned_audio)
                 )
 
                 # 保存对齐结果到JSON文件
                 align_result_copy = align_result.copy()
                 align_result_copy['saved_at'] = datetime.now().isoformat()
-                with open(paths['aligned_results'], 'w', encoding='utf-8') as f:
+                with open(paths.aligned_results, 'w', encoding='utf-8') as f:
                     json.dump(align_result_copy, f, ensure_ascii=False, indent=2)
 
                 self._mark_step_completed(cache_data, 'align_audio', {'result': align_result})
-                self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
+                self._save_pipeline_cache(paths.pipeline_cache, cache_data)
             else:
                 self.logger.info("步骤5: 音频对齐 (已完成，跳过)")
 
             # 6. 生成对齐字幕
             if not self._check_step_completed(cache_data, 'generate_aligned_srt'):
                 self.logger.info("步骤6: 生成对齐字幕")
-                
+
                 # 生成对齐后的SRT字幕
                 generate_aligned_srt(
-                    str(paths['aligned_results']),
-                    str(paths['processed_subtitle']),
-                    str(paths['aligned_srt'])
+                    str(paths.aligned_results),
+                    str(paths.processed_subtitle),
+                    str(paths.aligned_srt)
                 )
-                
+
                 # 检查原始字幕格式，如果不是SRT则需要转换为相应格式
-                original_subtitle_path = str(paths['subtitle_path'])
+                original_subtitle_path = str(paths.subtitle_path)
                 original_subtitle_ext = Path(original_subtitle_path).suffix.lower()
-                
+
                 if original_subtitle_ext != '.srt':
                     self.logger.info(f"检测到原始字幕格式为 {original_subtitle_ext}，正在转换...")
-                    
+
                     if original_subtitle_ext == '.ass':
                         # 对于ASS格式，使用sync_srt_timestamps_to_ass方法同步时间戳
-                        aligned_ass_path = paths['output_dir'] / f"{Path(video_path).stem}_aligned.ass"
+                        aligned_ass_path = paths.output_dir / f"{Path(video_path).stem}_aligned.ass"
                         sync_success = sync_srt_timestamps_to_ass(
                             original_subtitle_path,
-                            str(paths['aligned_srt']),
+                            str(paths.aligned_srt),
                             str(aligned_ass_path)
                         )
                         if sync_success:
@@ -511,18 +719,18 @@ class DubbingPipeline:
                             self.logger.error("ASS字幕时间戳同步失败")
                     else:
                         # 对于其他格式，使用convert_subtitle转换
-                        aligned_subtitle_path = paths['output_dir'] / f"{Path(video_path).stem}_aligned{original_subtitle_ext}"
+                        aligned_subtitle_path = paths.output_dir / f"{Path(video_path).stem}_aligned{original_subtitle_ext}"
                         convert_success = convert_subtitle(
-                            str(paths['aligned_srt']),
+                            str(paths.aligned_srt),
                             str(aligned_subtitle_path)
                         )
                         if convert_success:
                             self.logger.info(f"字幕格式转换完成: {aligned_subtitle_path}")
                         else:
                             self.logger.error("字幕格式转换失败")
-                
+
                 self._mark_step_completed(cache_data, 'generate_aligned_srt')
-                self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
+                self._save_pipeline_cache(paths.pipeline_cache, cache_data)
             else:
                 self.logger.info("步骤6: 生成对齐字幕 (已完成，跳过)")
 
@@ -530,12 +738,12 @@ class DubbingPipeline:
             if not self._check_step_completed(cache_data, 'process_video_speed'):
                 self.logger.info("步骤7: 处理视频速度调整")
                 process_video_speed_adjustment(
-                    str(paths['silent_video']),
-                    str(paths['processed_subtitle']),
-                    str(paths['aligned_srt'])
+                    str(paths.silent_video),
+                    str(paths.processed_subtitle),
+                    str(paths.aligned_srt)
                 )
                 self._mark_step_completed(cache_data, 'process_video_speed')
-                self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
+                self._save_pipeline_cache(paths.pipeline_cache, cache_data)
             else:
                 self.logger.info("步骤7: 处理视频速度调整 (已完成，跳过)")
 
@@ -543,16 +751,16 @@ class DubbingPipeline:
             if not self._check_step_completed(cache_data, 'merge_audio_video'):
                 self.logger.info("步骤8: 合并音视频")
                 merge_audio_video(
-                    str(paths['speed_adjusted_video']),
-                    str(paths['aligned_audio']),
-                    str(paths['final_video'])
+                    str(paths.speed_adjusted_video),
+                    str(paths.aligned_audio),
+                    str(paths.final_video)
                 )
                 self._mark_step_completed(cache_data, 'merge_audio_video')
-                self._save_pipeline_cache(paths['pipeline_cache'], cache_data)
+                self._save_pipeline_cache(paths.pipeline_cache, cache_data)
             else:
                 self.logger.info("步骤8: 合并音视频 (已完成，跳过)")
 
-            self.logger.info(f"处理完成！输出文件: {paths['final_video']}")
+            self.logger.info(f"处理完成！输出文件: {paths.final_video}")
 
             # 计算完成的步骤数
             completed_steps = sum(1 for step in cache_data['completed_steps'].values() if step.get('completed', False))
@@ -560,10 +768,10 @@ class DubbingPipeline:
             return {
                 'success': True,
                 'message': '视频配音处理完成',
-                'output_file': str(paths['final_video']),
-                'output_dir': str(paths['output_dir']),
+                'output_file': str(paths.final_video),
+                'output_dir': str(paths.output_dir),
                 'steps_completed': completed_steps,
-                'cache_file': str(paths['pipeline_cache']),
+                'cache_file': str(paths.pipeline_cache),
                 'resumed_from_cache': resume_from_cache and existing_cache is not None
             }
 
@@ -620,9 +828,9 @@ class DubbingPipeline:
             检查结果
         """
         try:
-            paths = self._get_file_paths(video_path, "")
-            cache_file = paths['pipeline_cache']
-            
+            paths = self._get_file_paths(video_path)
+            cache_file = paths.pipeline_cache
+
             if not cache_file.exists():
                 return {
                     'success': True,
@@ -631,10 +839,10 @@ class DubbingPipeline:
                     'cache_exists': False,
                     'repaired': False
                 }
-            
+
             # 尝试加载缓存
             cache_data = self._load_pipeline_cache(cache_file)
-            
+
             if cache_data is None:
                 # 缓存文件已损坏，已被删除
                 return {
@@ -645,12 +853,12 @@ class DubbingPipeline:
                     'repaired': True,
                     'action': 'deleted_corrupted_cache'
                 }
-            
+
             # 检查缓存文件大小
             file_size = cache_file.stat().st_size
             if file_size > 1024 * 1024:  # 大于1MB
                 self.logger.info(f"检测到过大的缓存文件: {file_size} bytes")
-                
+
                 # 优化缓存文件
                 cleanup_result = self.cleanup_large_cache_file(video_path)
                 return {
@@ -662,7 +870,7 @@ class DubbingPipeline:
                     'action': 'optimized_cache',
                     'cleanup_result': cleanup_result
                 }
-            
+
             return {
                 'success': True,
                 'message': '缓存文件正常',
@@ -671,7 +879,7 @@ class DubbingPipeline:
                 'repaired': False,
                 'file_size': file_size
             }
-            
+
         except Exception as e:
             self.logger.error(f"检查缓存文件失败: {str(e)}")
             return {
@@ -691,9 +899,9 @@ class DubbingPipeline:
             清理结果
         """
         try:
-            paths = self._get_file_paths(video_path, "")
-            cache_file = paths['pipeline_cache']
-            
+            paths = self._get_file_paths(video_path)
+            cache_file = paths.pipeline_cache
+
             if cache_file.exists():
                 cache_file.unlink()
                 self.logger.info(f"缓存文件已删除: {cache_file}")
@@ -709,7 +917,7 @@ class DubbingPipeline:
                     'message': '缓存文件不存在',
                     'cache_file': str(cache_file)
                 }
-                
+
         except Exception as e:
             self.logger.error(f"清理缓存失败: {str(e)}")
             return {
@@ -729,9 +937,9 @@ class DubbingPipeline:
             缓存信息
         """
         try:
-            paths = self._get_file_paths(video_path, "")
-            cache_file = paths['pipeline_cache']
-            
+            paths = self._get_file_paths(video_path)
+            cache_file = paths.pipeline_cache
+
             if not cache_file.exists():
                 return {
                     'success': True,
@@ -739,7 +947,7 @@ class DubbingPipeline:
                     'cache_file': str(cache_file),
                     'cache_exists': False
                 }
-            
+
             cache_data = self._load_pipeline_cache(cache_file)
             if not cache_data:
                 return {
@@ -748,10 +956,10 @@ class DubbingPipeline:
                     'cache_file': str(cache_file),
                     'cache_exists': True
                 }
-            
+
             completed_steps = cache_data.get('completed_steps', {})
             completed_count = sum(1 for step in completed_steps.values() if step.get('completed', False))
-            
+
             return {
                 'success': True,
                 'message': '缓存信息获取成功',
@@ -761,11 +969,13 @@ class DubbingPipeline:
                 'updated_at': cache_data.get('updated_at'),
                 'total_steps': 8,
                 'completed_steps': completed_count,
-                'completed_step_names': [name for name, step in completed_steps.items() if step.get('completed', False)],
+                'completed_step_names': [name for name, step in completed_steps.items() if
+                                         step.get('completed', False)],
                 'remaining_steps': 8 - completed_count,
-                'remaining_step_names': [name for name, step in completed_steps.items() if not step.get('completed', False)]
+                'remaining_step_names': [name for name, step in completed_steps.items() if
+                                         not step.get('completed', False)]
             }
-            
+
         except Exception as e:
             self.logger.error(f"获取缓存信息失败: {str(e)}")
             return {

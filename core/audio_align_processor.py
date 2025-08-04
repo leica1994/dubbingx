@@ -1022,7 +1022,9 @@ class AudioAlignProcessor:
         通过删除特定文件可以回退到前一个步骤重新处理。
         """
         video_file = Path(silent_video_path)
-        output_dir = video_file.parent / "adjusted_video"
+        # 获取主输出目录（media_separation 的父目录）
+        main_output_dir = video_file.parent.parent
+        output_dir = main_output_dir / "adjusted_video"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         return {
@@ -1950,7 +1952,9 @@ class AudioAlignProcessor:
 
             # 生成输出路径
             video_file = Path(original_video_path)
-            output_dir = video_file.parent / "adjusted_video"
+            # 获取主输出目录（media_separation 的父目录）
+            main_output_dir = video_file.parent.parent
+            output_dir = main_output_dir / "adjusted_video"
             output_dir.mkdir(parents=True, exist_ok=True)
             final_video_path = (
                     output_dir / f"final_speed_adjusted_{video_file.stem}.mp4"
@@ -2137,7 +2141,9 @@ class AudioAlignProcessor:
         try:
             # 创建输出目录
             video_file = Path(silent_video_path)
-            segments_dir = video_file.parent / "adjusted_video"
+            # 获取主输出目录（media_separation 的父目录）
+            main_output_dir = video_file.parent.parent
+            segments_dir = main_output_dir / "adjusted_video"
             segments_dir.mkdir(parents=True, exist_ok=True)
 
             # 检测GPU加速选项
