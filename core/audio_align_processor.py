@@ -1454,6 +1454,7 @@ class AudioAlignProcessor:
                 ],
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=30
             )
             
@@ -1494,6 +1495,7 @@ class AudioAlignProcessor:
                 ],
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
             )
 
             if result.returncode == 0:
@@ -1864,7 +1866,7 @@ class AudioAlignProcessor:
                         f"变速片段 {segment['index']}: 比例 {speed_ratio:.3f}"
                     )
                     result = subprocess.run(
-                        cmd, capture_output=True, text=True
+                        cmd, capture_output=True, text=True, encoding='utf-8'
                     )
 
                     if result.returncode == 0:
@@ -2044,7 +2046,7 @@ class AudioAlignProcessor:
 
                 # 执行拼接
                 self.logger.debug(f"拼接命令: {' '.join(cmd)}")
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
 
                 if result.returncode == 0:
                     # 拼接成功 - 获取实际视频时长
@@ -2190,7 +2192,7 @@ class AudioAlignProcessor:
                         f"分割片段 {segment['index']}: {' '.join(cmd)}"
                     )
                     result = subprocess.run(
-                        cmd, capture_output=True, text=True
+                        cmd, capture_output=True, text=True, encoding='utf-8'
                     )
 
                     if result.returncode == 0:
@@ -2304,12 +2306,12 @@ class AudioAlignProcessor:
         try:
             # 检查nvidia-smi命令
             result = subprocess.run(
-                ["nvidia-smi"], capture_output=True, text=True
+                ["nvidia-smi"], capture_output=True, text=True, encoding='utf-8'
             )
             if result.returncode == 0:
                 # 检查ffmpeg是否支持CUDA
                 result = subprocess.run(
-                    ["ffmpeg", "-hwaccels"], capture_output=True, text=True
+                    ["ffmpeg", "-hwaccels"], capture_output=True, text=True, encoding='utf-8'
                 )
                 return "cuda" in result.stdout.lower()
             return False
