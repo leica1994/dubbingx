@@ -281,7 +281,6 @@ class MediaProcessor:
                 try:
                     start_time = entry["start_time"]
                     end_time = entry["end_time"]
-                    text = entry["text"]
 
                     # 验证时间戳
                     if start_time >= end_time or start_time < 0:
@@ -294,7 +293,7 @@ class MediaProcessor:
 
                     # 静音检测
                     is_silence = self._is_silence_segment(
-                        segment_audio, sample_rate
+                        segment_audio
                     )
 
                     if not is_silence:  # 只收集非静音片段用于统计
@@ -335,7 +334,7 @@ class MediaProcessor:
 
                     # 静音检测
                     is_silence = self._is_silence_segment(
-                        segment_audio, sample_rate
+                        segment_audio
                     )
 
                     # 质量检查
@@ -693,7 +692,6 @@ class MediaProcessor:
     def _is_silence_segment(
             self,
             audio_data: np.ndarray,
-            sample_rate: int,
             silence_threshold: float = 0.01,
             silence_ratio_threshold: float = 0.8,
     ) -> bool:
