@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -791,40 +790,7 @@ class DubbingPipeline:
                 'error': str(e)
             }
 
-    def process_batch(self, video_subtitle_pairs: list) -> Dict[str, Any]:
-        """
-        批量处理多个视频
-
-        Args:
-            video_subtitle_pairs: 包含(video_path, subtitle_path)元组的列表
-
-        Returns:
-            批量处理结果
-        """
-        results = []
-        success_count = 0
-        failed_count = 0
-
-        for i, (video_path, subtitle_path) in enumerate(video_subtitle_pairs):
-            self.logger.info(f"处理第 {i + 1}/{len(video_subtitle_pairs)} 个视频")
-
-            result = self.process_video(video_path, subtitle_path)
-            results.append(result)
-
-            if result['success']:
-                success_count += 1
-            else:
-                failed_count += 1
-
-        return {
-            'success': failed_count == 0,
-            'message': f'批量处理完成: {success_count} 成功, {failed_count} 失败',
-            'total_count': len(video_subtitle_pairs),
-            'success_count': success_count,
-            'failed_count': failed_count,
-            'results': results
-        }
-
+  
     def check_and_repair_cache(self, video_path: str) -> Dict[str, Any]:
         """
         检查并修复缓存文件
@@ -1038,7 +1004,7 @@ class StepType(Enum):
     """处理步骤类型，用于资源管理"""
     GPU_INTENSIVE = "gpu_intensive"  # GPU密集型：媒体分离、TTS生成
     CPU_INTENSIVE = "cpu_intensive"  # CPU密集型：字幕处理、音频对齐
-    IO_INTENSIVE = "io_intensive"    # I/O密集型：文件操作、FFmpeg处理
+    IO_INTENSIVE = "io_intensive"  # I/O密集型：文件操作、FFmpeg处理
 
 
 @dataclass
@@ -1063,7 +1029,7 @@ class ResourcePool:
     gpu_semaphore: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(2))
     cpu_semaphore: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(4))
     io_semaphore: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(8))
-    
+
     def get_config_summary(self) -> Dict[StepType, Dict[str, int]]:
         """获取资源池配置摘要"""
         return {
@@ -1084,7 +1050,7 @@ class ResourcePool:
 
 class ParallelDubbingPipeline(DubbingPipeline):
     """支持并行处理的配音流水线"""
-    
+
     PROCESSING_STEPS = [
         ('preprocess_subtitle', StepType.CPU_INTENSIVE),
         ('separate_media', StepType.GPU_INTENSIVE),
@@ -1095,7 +1061,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
         ('process_video_speed', StepType.IO_INTENSIVE),
         ('merge_audio_video', StepType.IO_INTENSIVE)
     ]
-    
+
     def __init__(self, output_dir: Optional[str] = None, max_workers: int = None):
         """
         初始化并行配音流水线
@@ -1109,9 +1075,9 @@ class ParallelDubbingPipeline(DubbingPipeline):
         self.resource_pool = ResourcePool()
         self.active_tasks: Dict[str, VideoTask] = {}
         self.task_lock = threading.Lock()
-        
-    def process_batch_parallel(self, video_subtitle_pairs: List[Tuple[str, Optional[str]]], 
-                             resume_from_cache: bool = True) -> Dict[str, Any]:
+
+    def process_batch_parallel(self, video_subtitle_pairs: List[Tuple[str, Optional[str]]],
+                               resume_from_cache: bool = True) -> Dict[str, Any]:
         """
         并行批量处理多个视频
         
@@ -1124,7 +1090,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
         """
         start_time = time.time()
         self.logger.info(f"开始并行批量处理 {len(video_subtitle_pairs)} 个视频")
-        
+
         # 创建视频任务
         tasks = []
         for i, (video_path, subtitle_path) in enumerate(video_subtitle_pairs):
@@ -1137,7 +1103,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     task_id=task_id,
                     paths=paths
                 )
-                
+
                 # 加载缓存数据
                 if resume_from_cache:
                     cache_data = self._load_pipeline_cache(paths.pipeline_cache)
@@ -1147,9 +1113,9 @@ class ParallelDubbingPipeline(DubbingPipeline):
                             step_name: step_data.get('completed', False)
                             for step_name, step_data in cache_data.get('completed_steps', {}).items()
                         }
-                
+
                 tasks.append(task)
-                
+
             except Exception as e:
                 self.logger.error(f"创建任务失败 {task_id}: {e}")
                 tasks.append(VideoTask(
@@ -1159,18 +1125,18 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     status="failed",
                     error_message=str(e)
                 ))
-        
+
         # 执行并行处理
         results = self._execute_parallel_processing(tasks)
-        
+
         # 统计结果
         total_time = time.time() - start_time
         success_count = sum(1 for result in results if result['success'])
         failed_count = len(results) - success_count
-        
+
         self.logger.info(f"并行批量处理完成，耗时 {total_time:.2f}s")
         self.logger.info(f"成功: {success_count}, 失败: {failed_count}")
-        
+
         return {
             'success': failed_count == 0,
             'message': f'并行批量处理完成: {success_count} 成功, {failed_count} 失败',
@@ -1180,7 +1146,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
             'total_time': total_time,
             'results': results
         }
-    
+
     def _execute_parallel_processing(self, tasks: List[VideoTask]) -> List[Dict[str, Any]]:
         """
         执行并行处理
@@ -1196,14 +1162,14 @@ class ParallelDubbingPipeline(DubbingPipeline):
             with self.task_lock:
                 for task in tasks:
                     self.active_tasks[task.task_id] = task
-            
+
             try:
                 # 提交所有任务
                 future_to_task = {
                     executor.submit(self._process_single_video_parallel, task): task
                     for task in tasks
                 }
-                
+
                 # 等待所有任务完成
                 results = []
                 for future in as_completed(future_to_task):
@@ -1220,14 +1186,14 @@ class ParallelDubbingPipeline(DubbingPipeline):
                             'message': f'任务执行失败: {str(e)}',
                             'error': str(e)
                         })
-                
+
                 return results
-                
+
             finally:
                 # 清理活动任务
                 with self.task_lock:
                     self.active_tasks.clear()
-    
+
     def _process_single_video_parallel(self, task: VideoTask) -> Dict[str, Any]:
         """
         并行处理单个视频任务
@@ -1241,7 +1207,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
         try:
             task.status = "processing"
             self.logger.info(f"开始处理任务 {task.task_id}: {task.video_path}")
-            
+
             if task.error_message:
                 return {
                     'success': False,
@@ -1250,7 +1216,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     'message': task.error_message,
                     'error': task.error_message
                 }
-            
+
             # 初始化缓存数据
             if not task.cache_data:
                 task.cache_data = {
@@ -1261,46 +1227,46 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     'completed_steps': {},
                     'file_paths': self._generate_file_paths_dict(task.paths)
                 }
-            
+
             # 按步骤执行处理
             for step_index, (step_name, step_type) in enumerate(self.PROCESSING_STEPS):
                 if task.completed_steps.get(step_name, False):
                     self.logger.info(f"任务 {task.task_id} - 步骤 {step_name} (已完成，跳过)")
                     continue
-                
+
                 # 检查依赖
                 if not self._check_step_dependencies_for_task(task, step_name):
                     self.logger.error(f"任务 {task.task_id} - 步骤 {step_name} 依赖未满足")
                     raise Exception(f"步骤 {step_name} 依赖未满足")
-                
+
                 # 获取对应的信号量
                 semaphore = self._get_semaphore_for_step_type(step_type)
-                
+
                 # 执行步骤
                 with semaphore:
                     self.logger.info(f"任务 {task.task_id} - 开始步骤 {step_name}")
                     step_result = self._execute_single_step(task, step_name)
-                    
+
                     if not step_result.get('success', False):
                         raise Exception(f"步骤 {step_name} 执行失败: {step_result.get('error', '未知错误')}")
-                    
+
                     # 更新任务状态
                     task.completed_steps[step_name] = True
                     task.step_results[step_name] = step_result
                     task.current_step = step_index + 1
-                    
+
                     # 标记步骤完成并保存缓存
                     self._mark_step_completed(task.cache_data, step_name, step_result)
                     self._save_pipeline_cache(task.paths.pipeline_cache, task.cache_data)
-                    
+
                     self.logger.info(f"任务 {task.task_id} - 完成步骤 {step_name}")
-            
+
             # 任务完成
             task.status = "completed"
             total_time = time.time() - task.start_time
-            
+
             self.logger.info(f"任务 {task.task_id} 处理完成，耗时 {total_time:.2f}s")
-            
+
             return {
                 'success': True,
                 'task_id': task.task_id,
@@ -1311,12 +1277,12 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 'steps_completed': len(self.PROCESSING_STEPS),
                 'processing_time': total_time
             }
-            
+
         except Exception as e:
             task.status = "failed"
             task.error_message = str(e)
             self.logger.error(f"任务 {task.task_id} 处理失败: {e}")
-            
+
             return {
                 'success': False,
                 'task_id': task.task_id,
@@ -1324,7 +1290,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 'message': f'处理失败: {str(e)}',
                 'error': str(e)
             }
-    
+
     def _get_semaphore_for_step_type(self, step_type: StepType) -> threading.Semaphore:
         """
         根据步骤类型获取对应的信号量
@@ -1341,7 +1307,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
             return self.resource_pool.cpu_semaphore
         else:  # IO_INTENSIVE
             return self.resource_pool.io_semaphore
-    
+
     def _generate_file_paths_dict(self, paths: DubbingPaths) -> Dict[str, str]:
         """
         生成文件路径字典
@@ -1373,7 +1339,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
             'speed_adjusted_video': str(paths.speed_adjusted_video),
             'pipeline_cache': str(paths.pipeline_cache)
         }
-    
+
     def _check_step_dependencies_for_task(self, task: VideoTask, step_name: str) -> bool:
         """
         检查任务的步骤依赖是否满足
@@ -1398,15 +1364,15 @@ class ParallelDubbingPipeline(DubbingPipeline):
             'merge_audio_video': ['preprocess_subtitle', 'separate_media', 'generate_reference_audio', 'generate_tts',
                                   'align_audio', 'generate_aligned_srt', 'process_video_speed']
         }
-        
+
         dependencies = step_dependencies.get(step_name, [])
         for dep in dependencies:
             if not task.completed_steps.get(dep, False):
                 self.logger.warning(f"任务 {task.task_id} - 步骤 {step_name} 的依赖 {dep} 未完成")
                 return False
-        
+
         return True
-    
+
     def _execute_single_step(self, task: VideoTask, step_name: str) -> Dict[str, Any]:
         """
         执行单个处理步骤
@@ -1420,15 +1386,15 @@ class ParallelDubbingPipeline(DubbingPipeline):
         """
         try:
             paths = task.paths
-            
+
             if step_name == 'preprocess_subtitle':
                 result = preprocess_subtitle(str(paths.subtitle_path), str(paths.output_dir))
                 return {'success': True, 'result': result}
-                
+
             elif step_name == 'separate_media':
                 result = separate_media(str(paths.video_path), str(paths.media_separation_dir))
                 return {'success': True, 'result': result}
-                
+
             elif step_name == 'generate_reference_audio':
                 result = generate_reference_audio(
                     str(paths.vocal_audio),
@@ -1436,7 +1402,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     str(paths.reference_audio_dir)
                 )
                 return {'success': True, 'result': result}
-                
+
             elif step_name == 'generate_tts':
                 # 检查参考结果文件是否存在
                 if not paths.reference_results.exists():
@@ -1444,45 +1410,45 @@ class ParallelDubbingPipeline(DubbingPipeline):
                         'success': False,
                         'error': f'参考结果文件不存在: {paths.reference_results}'
                     }
-                
+
                 result = generate_tts_from_reference(str(paths.reference_results), str(paths.tts_output_dir))
                 return {'success': result.get('success', False), 'result': result, 'error': result.get('error')}
-                
+
             elif step_name == 'align_audio':
                 from core.audio_align_processor import align_audio_with_subtitles
-                
+
                 result = align_audio_with_subtitles(
                     tts_results_path=str(paths.tts_results),
                     srt_path=str(paths.processed_subtitle),
                     output_path=str(paths.aligned_audio)
                 )
-                
+
                 # 保存对齐结果到JSON文件
                 align_result_copy = result.copy()
                 align_result_copy['saved_at'] = datetime.now().isoformat()
                 with open(paths.aligned_results, 'w', encoding='utf-8') as f:
                     json.dump(align_result_copy, f, ensure_ascii=False, indent=2)
-                
+
                 return {'success': True, 'result': result}
-                
+
             elif step_name == 'generate_aligned_srt':
                 from core.audio_align_processor import generate_aligned_srt
                 from core.subtitle.subtitle_processor import convert_subtitle, sync_srt_timestamps_to_ass
-                
+
                 # 生成对齐后的SRT字幕
                 generate_aligned_srt(
                     str(paths.aligned_results),
                     str(paths.processed_subtitle),
                     str(paths.aligned_srt)
                 )
-                
+
                 # 检查原始字幕格式，如果不是SRT则需要转换为相应格式
                 original_subtitle_path = str(paths.subtitle_path)
                 original_subtitle_ext = Path(original_subtitle_path).suffix.lower()
-                
+
                 if original_subtitle_ext != '.srt':
                     self.logger.info(f"检测到原始字幕格式为 {original_subtitle_ext}，正在转换...")
-                    
+
                     if original_subtitle_ext == '.ass':
                         # 对于ASS格式，使用sync_srt_timestamps_to_ass方法同步时间戳
                         aligned_ass_path = paths.output_dir / f"{Path(task.video_path).stem}_aligned.ass"
@@ -1506,19 +1472,19 @@ class ParallelDubbingPipeline(DubbingPipeline):
                             self.logger.info(f"字幕格式转换完成: {aligned_subtitle_path}")
                         else:
                             self.logger.warning("字幕格式转换失败")
-                
+
                 return {'success': True}
-                
+
             elif step_name == 'process_video_speed':
                 from core.audio_align_processor import process_video_speed_adjustment
-                
+
                 process_video_speed_adjustment(
                     str(paths.silent_video),
                     str(paths.processed_subtitle),
                     str(paths.aligned_srt)
                 )
                 return {'success': True}
-                
+
             elif step_name == 'merge_audio_video':
                 merge_audio_video(
                     str(paths.speed_adjusted_video),
@@ -1526,20 +1492,20 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     str(paths.final_video)
                 )
                 return {'success': True}
-                
+
             else:
                 return {
                     'success': False,
                     'error': f'未知步骤: {step_name}'
                 }
-                
+
         except Exception as e:
             self.logger.error(f"步骤 {step_name} 执行失败: {e}")
             return {
                 'success': False,
                 'error': str(e)
             }
-    
+
     def get_processing_status(self) -> Dict[str, Any]:
         """
         获取当前处理状态
@@ -1551,14 +1517,14 @@ class ParallelDubbingPipeline(DubbingPipeline):
             active_count = len(self.active_tasks)
             status_counts = {}
             step_counts = {}
-            
+
             for task in self.active_tasks.values():
                 status = task.status
                 status_counts[status] = status_counts.get(status, 0) + 1
-                
+
                 current_step = task.current_step
                 step_counts[current_step] = step_counts.get(current_step, 0) + 1
-            
+
             return {
                 'active_tasks': active_count,
                 'status_distribution': status_counts,
@@ -1569,7 +1535,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     'io_available': self.resource_pool.io_semaphore._value
                 }
             }
-    
+
     def optimize_cache_for_parallel(self, video_path: str) -> Dict[str, Any]:
         """
         为并行处理优化缓存
@@ -1583,7 +1549,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
         try:
             paths = self._get_file_paths(video_path)
             cache_file = paths.pipeline_cache
-            
+
             if not cache_file.exists():
                 return {
                     'success': True,
@@ -1591,15 +1557,15 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     'cache_file': str(cache_file),
                     'optimized': False
                 }
-            
+
             # 检查缓存大小
             file_size = cache_file.stat().st_size
             if file_size > 512 * 1024:  # 大于512KB
                 self.logger.info(f"检测到大型缓存文件 {file_size} bytes，开始优化...")
-                
+
                 # 使用父类的缓存清理方法
                 cleanup_result = self.cleanup_large_cache_file(video_path)
-                
+
                 return {
                     'success': True,
                     'message': '缓存已为并行处理优化',
@@ -1616,7 +1582,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     'original_size': file_size,
                     'optimized': False
                 }
-                
+
         except Exception as e:
             self.logger.error(f"优化缓存失败: {e}")
             return {
@@ -1624,7 +1590,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 'message': f'优化缓存失败: {str(e)}',
                 'error': str(e)
             }
-    
+
     def preheat_cache_for_batch(self, video_subtitle_pairs: List[Tuple[str, Optional[str]]]) -> Dict[str, Any]:
         """
         预热批量处理的缓存
@@ -1642,32 +1608,32 @@ class ParallelDubbingPipeline(DubbingPipeline):
             'cache_optimized': 0,
             'cache_errors': 0
         }
-        
+
         for video_path, subtitle_path in video_subtitle_pairs:
             try:
                 paths = self._get_file_paths(video_path, subtitle_path)
                 cache_file = paths.pipeline_cache
-                
+
                 if cache_file.exists():
                     cache_stats['cache_found'] += 1
-                    
+
                     # 检查并优化缓存
                     optimize_result = self.optimize_cache_for_parallel(video_path)
                     if optimize_result.get('optimized', False):
                         cache_stats['cache_optimized'] += 1
                 else:
                     cache_stats['cache_missing'] += 1
-                    
+
             except Exception as e:
                 self.logger.warning(f"预热缓存失败 {video_path}: {e}")
                 cache_stats['cache_errors'] += 1
-        
+
         return {
             'success': True,
             'message': f'缓存预热完成: {cache_stats["cache_found"]} 个已缓存, {cache_stats["cache_missing"]} 个新任务',
             'cache_stats': cache_stats
         }
-    
+
     def get_detailed_progress(self) -> Dict[str, Any]:
         """
         获取详细的处理进度信息
@@ -1689,7 +1655,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                         'pending': 0
                     }
                 }
-            
+
             tasks_detail = []
             summary = {
                 'total': 0,
@@ -1698,7 +1664,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 'failed': 0,
                 'pending': 0
             }
-            
+
             for task in self.active_tasks.values():
                 task_info = {
                     'task_id': task.task_id,
@@ -1711,16 +1677,17 @@ class ParallelDubbingPipeline(DubbingPipeline):
                     'completed_steps': list(task.completed_steps.keys()),
                     'error_message': task.error_message
                 }
-                
+
                 tasks_detail.append(task_info)
                 summary['total'] += 1
                 summary[task.status] += 1
-            
+
             # 计算总体进度
             total_steps_possible = summary['total'] * len(self.PROCESSING_STEPS)
             completed_steps_total = sum(task.current_step for task in self.active_tasks.values())
-            overall_progress = round((completed_steps_total / total_steps_possible) * 100, 1) if total_steps_possible > 0 else 0
-            
+            overall_progress = round((completed_steps_total / total_steps_possible) * 100,
+                                     1) if total_steps_possible > 0 else 0
+
             return {
                 'active': True,
                 'message': f'正在处理 {summary["total"]} 个任务，总体进度 {overall_progress}%',
@@ -1737,7 +1704,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 },
                 'step_distribution': self._get_step_distribution()
             }
-    
+
     def _get_step_distribution(self) -> Dict[str, int]:
         """
         获取当前步骤分布统计
@@ -1746,14 +1713,14 @@ class ParallelDubbingPipeline(DubbingPipeline):
             步骤分布统计
         """
         step_counts = {}
-        
+
         for task in self.active_tasks.values():
             if task.status == 'processing' and task.current_step > 0:
                 step_name = self.PROCESSING_STEPS[task.current_step - 1][0]
                 step_counts[step_name] = step_counts.get(step_name, 0) + 1
-        
+
         return step_counts
-    
+
     def log_processing_summary(self, results: List[Dict[str, Any]]) -> None:
         """
         记录处理总结
@@ -1763,27 +1730,27 @@ class ParallelDubbingPipeline(DubbingPipeline):
         """
         if not results:
             return
-        
+
         total = len(results)
         success = sum(1 for r in results if r.get('success', False))
         failed = total - success
-        
+
         # 统计处理时间
         processing_times = [r.get('processing_time', 0) for r in results if r.get('processing_time')]
         avg_time = sum(processing_times) / len(processing_times) if processing_times else 0
         max_time = max(processing_times) if processing_times else 0
         min_time = min(processing_times) if processing_times else 0
-        
+
         self.logger.info("=== 批量处理总结 ===")
         self.logger.info(f"总任务数: {total}")
         self.logger.info(f"成功: {success}, 失败: {failed}")
-        self.logger.info(f"成功率: {success/total*100:.1f}%")
-        
+        self.logger.info(f"成功率: {success / total * 100:.1f}%")
+
         if processing_times:
             self.logger.info(f"平均处理时间: {avg_time:.2f}s")
             self.logger.info(f"最短处理时间: {min_time:.2f}s")
             self.logger.info(f"最长处理时间: {max_time:.2f}s")
-        
+
         # 记录失败任务
         failed_tasks = [r for r in results if not r.get('success', False)]
         if failed_tasks:
@@ -1792,7 +1759,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 video_name = Path(task.get('video_path', 'unknown')).stem
                 error = task.get('error', '未知错误')
                 self.logger.warning(f"  - {video_name}: {error}")
-    
+
     def export_processing_report(self, results: List[Dict[str, Any]], output_path: str) -> Dict[str, Any]:
         """
         导出处理报告
@@ -1813,17 +1780,17 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 'tasks': results,
                 'summary': self._generate_processing_summary(results)
             }
-            
+
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
-            
+
             self.logger.info(f"处理报告已导出到: {output_path}")
             return {
                 'success': True,
                 'message': f'报告已导出到: {output_path}',
                 'report_file': output_path
             }
-            
+
         except Exception as e:
             self.logger.error(f"导出报告失败: {e}")
             return {
@@ -1831,7 +1798,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 'message': f'导出报告失败: {str(e)}',
                 'error': str(e)
             }
-    
+
     def _generate_processing_summary(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         生成处理摘要
@@ -1844,16 +1811,16 @@ class ParallelDubbingPipeline(DubbingPipeline):
         """
         if not results:
             return {}
-        
+
         total = len(results)
         success = sum(1 for r in results if r.get('success', False))
-        
+
         processing_times = [r.get('processing_time', 0) for r in results if r.get('processing_time')]
-        
+
         return {
             'total_tasks': total,
-            'success_rate': f"{success/total*100:.1f}%",
-            'average_processing_time': f"{sum(processing_times)/len(processing_times):.2f}s" if processing_times else "N/A",
+            'success_rate': f"{success / total * 100:.1f}%",
+            'average_processing_time': f"{sum(processing_times) / len(processing_times):.2f}s" if processing_times else "N/A",
             'total_processing_time': f"{sum(processing_times):.2f}s",
             'failed_tasks': [
                 {
@@ -1863,7 +1830,7 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 for r in results if not r.get('success', False)
             ]
         }
-    
+
     def demo_parallel_processing(self, video_subtitle_pairs: List[Tuple[str, Optional[str]]]) -> Dict[str, Any]:
         """
         演示并行处理功能（包含详细的进度监控）
@@ -1875,20 +1842,20 @@ class ParallelDubbingPipeline(DubbingPipeline):
             演示处理结果
         """
         self.logger.info("=== 开始并行处理演示 ===")
-        
+
         # 1. 预热缓存
         self.logger.info("步骤1: 预热缓存...")
         cache_result = self.preheat_cache_for_batch(video_subtitle_pairs)
         self.logger.info(cache_result['message'])
-        
+
         # 2. 开始并行处理
         self.logger.info("步骤2: 开始并行处理...")
         start_time = time.time()
-        
+
         # 使用线程来实时监控进度
         import threading
         import time
-        
+
         def monitor_progress():
             """监控处理进度的线程函数"""
             while True:
@@ -1898,32 +1865,32 @@ class ParallelDubbingPipeline(DubbingPipeline):
                           f"处理中: {progress['summary']['processing']} | "
                           f"已完成: {progress['summary']['completed']} | "
                           f"GPU队列: {progress['resource_usage']['gpu_queue_size']} | "
-                          f"CPU队列: {progress['resource_usage']['cpu_queue_size']}", 
+                          f"CPU队列: {progress['resource_usage']['cpu_queue_size']}",
                           end='', flush=True)
                 else:
                     break
                 time.sleep(1)
-        
+
         # 启动监控线程
         monitor_thread = threading.Thread(target=monitor_progress)
         monitor_thread.daemon = True
         monitor_thread.start()
-        
+
         # 执行并行处理
         result = self.process_batch_parallel(video_subtitle_pairs, resume_from_cache=True)
-        
+
         # 等待监控线程结束
         monitor_thread.join(timeout=1)
         print()  # 换行
-        
+
         total_time = time.time() - start_time
         self.logger.info(f"=== 并行处理演示完成，总耗时 {total_time:.2f}s ===")
-        
+
         # 记录处理总结
         self.log_processing_summary(result['results'])
-        
+
         return result
-    
+
     @staticmethod
     def create_sample_usage_example():
         """
@@ -1957,5 +1924,5 @@ print(f"当前进度: {progress['overall_progress']}%")
 # 导出处理报告
 pipeline.export_processing_report(result['results'], "processing_report.json")
 '''
-        
+
         return example_code

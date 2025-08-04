@@ -34,12 +34,9 @@ from core.subtitle.subtitle_processor import convert_subtitle, sync_srt_timestam
 
 
 class GUIDubbingPipeline(QObject, DubbingPipeline):
-    """GUI专用的配音处理流水线，支持实时进度更新"""
+    """GUI专用的配音处理流水线，支持日志输出"""
     
     # 信号定义
-    step_started = Signal(str, str)  # 步骤ID, 步骤名称
-    step_progress = Signal(str, int)  # 步骤ID, 进度百分比
-    step_completed = Signal(str, bool, str)  # 步骤ID, 是否成功, 消息
     log_message = Signal(str)  # 日志消息
     
     def __init__(self, output_dir: Optional[str] = None):
@@ -48,18 +45,6 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
         
         # 设置日志处理器
         self.setup_logging()
-        
-        # 步骤映射
-        self.step_names = {
-            'preprocess_subtitle': '1. 预处理字幕',
-            'separate_media': '2. 分离音视频',
-            'generate_reference_audio': '3. 生成参考音频',
-            'generate_tts': '4. 生成TTS音频',
-            'align_audio': '5. 音频对齐',
-            'generate_aligned_srt': '6. 生成对齐字幕',
-            'process_video_speed': '7. 处理视频速度',
-            'merge_audio_video': '8. 合并音视频'
-        }
         
     def setup_logging(self):
         """设置日志处理器，将日志发送到信号"""
@@ -80,26 +65,10 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
         # 添加到当前logger
         self.logger.addHandler(handler)
         
-    def emit_step_started(self, step_id: str):
-        """发送步骤开始信号"""
-        step_name = self.step_names.get(step_id, step_id)
-        self.step_started.emit(step_id, step_name)
-        self.step_progress.emit(step_id, 0)
-        
-    def emit_step_progress(self, step_id: str, progress: int):
-        """发送步骤进度信号"""
-        self.step_progress.emit(step_id, progress)
-        
-    def emit_step_completed(self, step_id: str, success: bool, message: str = ""):
-        """发送步骤完成信号"""
-        if success:
-            self.step_progress.emit(step_id, 100)
-        self.step_completed.emit(step_id, success, message)
-        
     def process_video_with_progress(self, video_path: str, subtitle_path: Optional[str] = None, 
                                    resume_from_cache: bool = True) -> Dict[str, Any]:
         """
-        处理视频配音的完整流程，带实时进度更新
+        处理视频配音的完整流程
         """
         try:
             self.logger.info(f"开始处理视频: {video_path}")
@@ -169,27 +138,23 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
             
             for step_id, process_func, *args in steps_info:
                 if not self._check_step_completed(cache_data, step_id):
-                    self.emit_step_started(step_id)
+                    self.logger.info(f"开始处理步骤: {step_id}")
                     try:
                         if len(args) == 1:
                             result = process_func(args[0], cache_data)
                         else:
                             result = process_func(args[0], args[1], cache_data)
                         
-                        if result.get('success', True):
-                            self.emit_step_completed(step_id, True, "完成")
-                        else:
-                            self.emit_step_completed(step_id, False, result.get('message', '失败'))
+                        if not result.get('success', True):
                             return result
                     except Exception as e:
-                        self.emit_step_completed(step_id, False, str(e))
                         return {
                             'success': False,
                             'message': f'步骤 {step_id} 失败: {str(e)}',
                             'error': str(e)
                         }
                 else:
-                    self.emit_step_completed(step_id, True, "从缓存恢复")
+                    self.logger.info(f"步骤 {step_id} 已完成，跳过")
             
             self.logger.info(f"处理完成！输出文件: {paths.final_video}")
             
@@ -216,38 +181,29 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
     
     def _process_preprocess_subtitle(self, paths, cache_data):
         """处理字幕预处理步骤"""
-        self.emit_step_progress('preprocess_subtitle', 10)
         result = preprocess_subtitle(str(paths.subtitle_path), str(paths.output_dir))
-        self.emit_step_progress('preprocess_subtitle', 90)
         self._mark_step_completed(cache_data, 'preprocess_subtitle', {'result': result})
         self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        self.emit_step_progress('preprocess_subtitle', 100)
         return result
         
     def _process_separate_media(self, paths, cache_data):
         """处理媒体分离步骤"""
-        self.emit_step_progress('separate_media', 5)
         self.logger.info("开始分离音视频...")
         result = separate_media(str(paths.video_path), str(paths.media_separation_dir))
-        self.emit_step_progress('separate_media', 95)
         self._mark_step_completed(cache_data, 'separate_media', {'result': result})
         self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        self.emit_step_progress('separate_media', 100)
         return result
         
     def _process_generate_reference_audio(self, paths, cache_data):
         """处理生成参考音频步骤"""
-        self.emit_step_progress('generate_reference_audio', 10)
         self.logger.info("开始生成参考音频...")
         result = generate_reference_audio(
             str(paths.vocal_audio),
             str(paths.processed_subtitle),
             str(paths.reference_audio_dir)
         )
-        self.emit_step_progress('generate_reference_audio', 90)
         self._mark_step_completed(cache_data, 'generate_reference_audio', {'result': result})
         self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        self.emit_step_progress('generate_reference_audio', 100)
         return result
         
     def _process_generate_tts(self, paths, cache_data):
@@ -259,10 +215,8 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
                 'error': f'文件不存在: {paths.reference_results}'
             }
         
-        self.emit_step_progress('generate_tts', 5)
         self.logger.info("开始生成TTS音频...")
         result = generate_tts_from_reference(str(paths.reference_results), str(paths.tts_output_dir))
-        self.emit_step_progress('generate_tts', 95)
         
         if not result.get('success', False):
             return {
@@ -273,12 +227,10 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
         
         self._mark_step_completed(cache_data, 'generate_tts', {'result': result})
         self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        self.emit_step_progress('generate_tts', 100)
         return result
         
     def _process_align_audio(self, paths, cache_data):
         """处理音频对齐步骤"""
-        self.emit_step_progress('align_audio', 10)
         self.logger.info("开始音频对齐...")
         result = align_audio_with_subtitles(
             tts_results_path=str(paths.tts_results),
@@ -286,32 +238,24 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
             output_path=str(paths.aligned_audio)
         )
         
-        self.emit_step_progress('align_audio', 70)
-        
         # 保存对齐结果到JSON文件
         result_copy = result.copy()
         result_copy['saved_at'] = datetime.now().isoformat()
         with open(paths.aligned_results, 'w', encoding='utf-8') as f:
             json.dump(result_copy, f, ensure_ascii=False, indent=2)
         
-        self.emit_step_progress('align_audio', 90)
         self._mark_step_completed(cache_data, 'align_audio', {'result': result})
         self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        self.emit_step_progress('align_audio', 100)
         return result
         
     def _process_generate_aligned_srt(self, paths, video_path, cache_data):
         """处理生成对齐字幕步骤"""
-        self.emit_step_progress('generate_aligned_srt', 10)
-        
         # 生成对齐后的SRT字幕
         generate_aligned_srt(
             str(paths.aligned_results),
             str(paths.processed_subtitle),
             str(paths.aligned_srt)
         )
-        
-        self.emit_step_progress('generate_aligned_srt', 60)
         
         # 检查原始字幕格式
         original_subtitle_path = str(paths.subtitle_path)
@@ -342,40 +286,32 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
                 else:
                     self.logger.error("字幕格式转换失败")
         
-        self.emit_step_progress('generate_aligned_srt', 90)
         self._mark_step_completed(cache_data, 'generate_aligned_srt')
         self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        self.emit_step_progress('generate_aligned_srt', 100)
         return {'success': True}
         
     def _process_video_speed(self, paths, cache_data):
         """处理视频速度调整步骤"""
-        self.emit_step_progress('process_video_speed', 10)
         self.logger.info("开始处理视频速度调整...")
         process_video_speed_adjustment(
             str(paths.silent_video),
             str(paths.processed_subtitle),
             str(paths.aligned_srt)
         )
-        self.emit_step_progress('process_video_speed', 90)
         self._mark_step_completed(cache_data, 'process_video_speed')
         self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        self.emit_step_progress('process_video_speed', 100)
         return {'success': True}
         
     def _process_merge_audio_video(self, paths, cache_data):
         """处理音视频合并步骤"""
-        self.emit_step_progress('merge_audio_video', 10)
         self.logger.info("开始合并音视频...")
         merge_audio_video(
             str(paths.speed_adjusted_video),
             str(paths.aligned_audio),
             str(paths.final_video)
         )
-        self.emit_step_progress('merge_audio_video', 95)
         self._mark_step_completed(cache_data, 'merge_audio_video')
         self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        self.emit_step_progress('merge_audio_video', 100)
         return {'success': True}
 
 
@@ -509,7 +445,6 @@ class BatchDubbingWorkerThread(QThread):
     """批量配音处理工作线程"""
     
     # 信号定义
-    batch_progress = Signal(int, int)  # 当前项目, 总项目数
     item_finished = Signal(int, bool, str)  # 项目索引, 是否成功, 消息
     batch_finished = Signal(bool, str, dict)  # 是否成功, 消息, 结果详情
     
@@ -537,8 +472,6 @@ class BatchDubbingWorkerThread(QThread):
             for i, (video_path, subtitle_path) in enumerate(self.pairs):
                 if self.is_cancelled:
                     break
-                    
-                self.batch_progress.emit(i + 1, len(self.pairs))
                 
                 try:
                     result = self.pipeline.process_video(
@@ -884,7 +817,7 @@ class DubbingGUI(QMainWindow):
         left_panel = self.create_left_panel()
         splitter.addWidget(left_panel)
         
-        # 右侧面板（日志和进度）
+        # 右侧面板（日志和结果）
         right_panel = self.create_right_panel()
         splitter.addWidget(right_panel)
         
@@ -1178,10 +1111,7 @@ class DubbingGUI(QMainWindow):
         # 创建标签页
         tab_widget = QTabWidget()
         
-        # 进度标签页
-        progress_tab = self.create_progress_tab()
-        tab_widget.addTab(progress_tab, "处理进度")
-        
+          
         # 日志标签页
         log_tab = self.create_log_tab()
         tab_widget.addTab(log_tab, "日志输出")
@@ -1194,105 +1124,7 @@ class DubbingGUI(QMainWindow):
         
         return panel
         
-    def create_progress_tab(self) -> QWidget:
-        """创建进度标签页"""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setSpacing(8)  # 减少间距
-        layout.setContentsMargins(15, 15, 15, 15)  # 减少边距
-        
-        # 总体进度
-        overall_group = QGroupBox("总体进度")
-        overall_layout = QVBoxLayout(overall_group)
-        overall_layout.setContentsMargins(15, 12, 15, 12)  # 减少内边距
-        
-        self.overall_progress = QProgressBar()
-        self.overall_progress.setRange(0, 100)
-        self.overall_progress.setMinimumHeight(24)  # 减少高度
-        overall_layout.addWidget(self.overall_progress)
-        
-        self.overall_status_label = QLabel("准备就绪")
-        self.overall_status_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #333; background: transparent;")
-        overall_layout.addWidget(self.overall_status_label)
-        
-        layout.addWidget(overall_group)
-        
-        # 批量进度（批量模式时显示）
-        self.batch_progress_group = QGroupBox("批量进度")
-        batch_progress_layout = QVBoxLayout(self.batch_progress_group)
-        batch_progress_layout.setContentsMargins(15, 12, 15, 12)  # 减少内边距
-        
-        self.batch_progress = QProgressBar()
-        self.batch_progress.setRange(0, 100)
-        self.batch_progress.setMinimumHeight(24)  # 减少高度
-        batch_progress_layout.addWidget(self.batch_progress)
-        
-        self.batch_status_label = QLabel("等待开始")
-        self.batch_status_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #333; background: transparent;")
-        batch_progress_layout.addWidget(self.batch_status_label)
-        
-        layout.addWidget(self.batch_progress_group)
-        self.batch_progress_group.hide()
-        
-        # 详细步骤进度
-        steps_group = QGroupBox("处理步骤")
-        steps_layout = QVBoxLayout(steps_group)
-        steps_layout.setContentsMargins(15, 12, 15, 12)  # 减少内边距
-        steps_layout.setSpacing(5)  # 减少间距
-        
-        # 创建步骤列表
-        self.step_labels = {}
-        self.step_progress_bars = {}
-        
-        steps = [
-            ("preprocess_subtitle", "1. 预处理字幕"),
-            ("separate_media", "2. 分离音视频"),
-            ("generate_reference_audio", "3. 生成参考音频"),
-            ("generate_tts", "4. 生成TTS音频"),
-            ("align_audio", "5. 音频对齐"),
-            ("generate_aligned_srt", "6. 生成对齐字幕"),
-            ("process_video_speed", "7. 处理视频速度"),
-            ("merge_audio_video", "8. 合并音视频")
-        ]
-        
-        for step_id, step_name in steps:
-            step_frame = QFrame()
-            step_frame.setStyleSheet("""
-                QFrame { 
-                    background-color: #f9f9f9; 
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px; 
-                    padding: 4px; 
-                }
-            """)
-            step_layout = QHBoxLayout(step_frame)
-            step_layout.setContentsMargins(10, 6, 10, 6)  # 减少边距
-            
-            label = QLabel(step_name)
-            label.setMinimumWidth(180)
-            label.setStyleSheet("font-size: 12px; font-weight: bold; background: transparent; border: none; color: #333333;")
-            step_layout.addWidget(label)
-            
-            progress_bar = QProgressBar()
-            progress_bar.setRange(0, 100)
-            progress_bar.setValue(0)
-            progress_bar.setMinimumHeight(20)  # 减少高度
-            step_layout.addWidget(progress_bar)
-            
-            status_label = QLabel("等待中")
-            status_label.setMinimumWidth(90)
-            status_label.setStyleSheet("font-size: 11px; color: #666; background: transparent; border: none; font-weight: normal;")
-            step_layout.addWidget(status_label)
-            
-            steps_layout.addWidget(step_frame)
-            
-            self.step_labels[step_id] = status_label
-            self.step_progress_bars[step_id] = progress_bar
-            
-        layout.addWidget(steps_group)
-        
-        return tab
-        
+          
     def create_log_tab(self) -> QWidget:
         """创建日志标签页"""
         tab = QWidget()
@@ -1377,12 +1209,10 @@ class DubbingGUI(QMainWindow):
             self.current_mode = "single"
             self.single_file_panel.show()
             self.batch_panel.hide()
-            self.batch_progress_group.hide()
         else:
             self.current_mode = "batch"
             self.single_file_panel.hide()
             self.batch_panel.show()
-            self.batch_progress_group.show()
         
     def browse_video_file(self):
         """浏览选择视频文件"""
@@ -1556,10 +1386,6 @@ class DubbingGUI(QMainWindow):
         # 更新UI状态
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
-        self.overall_status_label.setText("处理中...")
-        
-        # 重置进度
-        self.reset_progress()
         
         try:
             # 创建工作线程
@@ -1574,9 +1400,6 @@ class DubbingGUI(QMainWindow):
             
             # 连接GUI管道的信号
             self.gui_pipeline = self.worker_thread.pipeline
-            self.gui_pipeline.step_started.connect(self.step_started)
-            self.gui_pipeline.step_progress.connect(self.step_progress)
-            self.gui_pipeline.step_completed.connect(self.step_completed)
             self.gui_pipeline.log_message.connect(self.log_text.append)
             
             # 启动线程
@@ -1591,7 +1414,6 @@ class DubbingGUI(QMainWindow):
             # 恢复UI状态
             self.start_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
-            self.overall_status_label.setText("启动失败")
         
     def start_batch_processing(self):
         """开始批量处理"""
@@ -1604,15 +1426,6 @@ class DubbingGUI(QMainWindow):
         # 更新UI状态
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
-        self.overall_status_label.setText("批量处理中...")
-        self.batch_status_label.setText(f"准备处理 {len(selected_pairs)} 个文件...")
-        
-        # 重置进度
-        self.reset_progress()
-        self.batch_progress.setValue(0)
-        
-        # 在批量模式下，显示批量进度信息
-        self.batch_status_label.setText(f"即将处理 {len(selected_pairs)} 个文件...")
         
         try:
             # 创建批量工作线程
@@ -1622,7 +1435,6 @@ class DubbingGUI(QMainWindow):
             )
             
             # 连接信号
-            self.batch_worker_thread.batch_progress.connect(self.batch_progress_updated)
             self.batch_worker_thread.item_finished.connect(self.batch_item_finished)
             self.batch_worker_thread.batch_finished.connect(self.batch_finished)
             
@@ -1638,8 +1450,6 @@ class DubbingGUI(QMainWindow):
             # 恢复UI状态
             self.start_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
-            self.overall_status_label.setText("批量处理启动失败")
-            self.batch_status_label.setText("启动失败")
         
     def cancel_processing(self):
         """取消处理"""
@@ -1653,71 +1463,8 @@ class DubbingGUI(QMainWindow):
             
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        self.overall_status_label.setText("已取消")
-        self.batch_status_label.setText("已取消")
         
-    def reset_progress(self):
-        """重置进度显示"""
-        self.overall_progress.setValue(0)
-        
-        for step_id, progress_bar in self.step_progress_bars.items():
-            progress_bar.setValue(0)
             
-        for step_id, label in self.step_labels.items():
-            label.setText("等待中")
-            label.setStyleSheet("font-size: 11px; color: #666; background: transparent; border: none; font-weight: normal;")
-            
-    def step_started(self, step_id: str, step_name: str):
-        """步骤开始"""
-        if step_id in self.step_labels:
-            self.step_labels[step_id].setText("进行中")
-            self.step_labels[step_id].setStyleSheet("font-size: 11px; color: #2196F3; font-weight: bold; background: transparent; border: none;")
-            
-    def step_progress(self, step_id: str, progress: int):
-        """步骤进度更新"""
-        if step_id in self.step_progress_bars:
-            self.step_progress_bars[step_id].setValue(progress)
-            
-        if step_id in self.step_labels:
-            if progress < 100:
-                self.step_labels[step_id].setText(f"进行中 {progress}%")
-                self.step_labels[step_id].setStyleSheet("font-size: 11px; color: #2196F3; font-weight: bold; background: transparent; border: none;")
-            else:
-                # 等待 step_completed 来设置最终状态
-                pass
-            
-    def step_completed(self, step_id: str, success: bool, message: str):
-        """步骤完成"""
-        if step_id in self.step_progress_bars:
-            self.step_progress_bars[step_id].setValue(100)
-            
-        if step_id in self.step_labels:
-            if success:
-                if "缓存恢复" in message:
-                    self.step_labels[step_id].setText("缓存恢复")
-                    self.step_labels[step_id].setStyleSheet("font-size: 11px; color: #FF9800; font-weight: bold; background: transparent; border: none;")
-                else:
-                    self.step_labels[step_id].setText("完成")
-                    self.step_labels[step_id].setStyleSheet("font-size: 11px; color: #4CAF50; font-weight: bold; background: transparent; border: none;")
-            else:
-                self.step_labels[step_id].setText("失败")
-                self.step_labels[step_id].setStyleSheet("font-size: 11px; color: #f44336; font-weight: bold; background: transparent; border: none;")
-            
-        # 更新总体进度 - 基于当前所有步骤的实际进度
-        total_progress = sum(self.step_progress_bars[step_id].value() for step_id in self.step_progress_bars.keys())
-        total_steps = len(self.step_progress_bars) * 100  # 每个步骤最大100分
-        overall_progress = int((total_progress / total_steps) * 100)
-        self.overall_progress.setValue(overall_progress)
-        
-    def batch_progress_updated(self, current: int, total: int):
-        """批量进度更新"""
-        progress = int((current / total) * 100)
-        self.batch_progress.setValue(progress)
-        self.batch_status_label.setText(f"正在处理第 {current}/{total} 个文件...")
-        
-        # 更新总体进度条显示批量进度
-        self.overall_progress.setValue(progress)
-        
     def batch_item_finished(self, index: int, success: bool, message: str):
         """批量处理中单个项目完成"""
         # 更新表格状态
@@ -1736,20 +1483,6 @@ class DubbingGUI(QMainWindow):
         # 更新UI状态
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        self.overall_status_label.setText("批量处理完成")
-        self.batch_status_label.setText(message)
-        self.batch_progress.setValue(100)
-        self.overall_progress.setValue(100)
-        
-        # 重置所有步骤进度条
-        for step_id in self.step_progress_bars:
-            self.step_progress_bars[step_id].setValue(100)
-            if success:
-                self.step_labels[step_id].setText("批量完成")
-                self.step_labels[step_id].setStyleSheet("font-size: 10px; color: #4CAF50; font-weight: bold; background: transparent; border: none;")
-            else:
-                self.step_labels[step_id].setText("批量完成")
-                self.step_labels[step_id].setStyleSheet("font-size: 10px; color: #FF9800; font-weight: bold; background: transparent; border: none;")
         
         # 显示结果信息
         result_info = f"""批量处理完成！
@@ -1776,9 +1509,6 @@ class DubbingGUI(QMainWindow):
         self.cancel_btn.setEnabled(False)
         
         if success:
-            self.overall_status_label.setText("处理完成")
-            self.overall_progress.setValue(100)
-            
             # 显示结果信息
             result_info = f"""处理完成！
 
@@ -1795,7 +1525,6 @@ class DubbingGUI(QMainWindow):
             
             QMessageBox.information(self, "成功", message)
         else:
-            self.overall_status_label.setText("处理失败")
             QMessageBox.critical(self, "失败", message)
             
     def show_cache_info(self):
