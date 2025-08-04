@@ -1432,38 +1432,48 @@ class AudioAlignProcessor:
     def _get_video_duration(self, video_path: str) -> float:
         """获取视频总时长"""
         try:
+            # 首先检查文件是否存在
+            if not os.path.exists(video_path):
+                self.logger.warning(f"视频文件不存在: {video_path}")
+                return 0.0
+
+            # 使用更健壮的ffprobe命令
             result = subprocess.run(
                 [
                     "ffprobe",
                     "-v",
-                    "quiet",
+                    "error",  # 只显示错误信息
                     "-show_entries",
                     "format=duration",
                     "-of",
-                    "csv=p=0",
+                    "default=noprint_wrappers=1:nokey=1",
                     video_path,
                 ],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                timeout=30,  # 添加超时
             )
 
             if result.returncode == 0:
                 duration_str = result.stdout.strip()
                 if duration_str.lower() in ["n/a", "na", ""]:
-                    self.logger.error(f"ffprobe返回无效时长: {duration_str}")
+                    self.logger.warning(f"ffprobe返回无效时长: {duration_str}")
                     return 0.0
                 try:
                     return float(duration_str)
                 except ValueError:
-                    self.logger.error(f"无法解析视频时长: {duration_str}")
+                    self.logger.warning(f"无法解析视频时长: {duration_str}")
                     return 0.0
             else:
-                self.logger.error(f"获取视频时长失败: {result.stderr}")
+                self.logger.warning(f"ffprobe执行失败: {result.stderr}")
                 return 0.0
 
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"获取视频时长超时: {video_path}")
+            return 0.0
         except Exception as e:
-            self.logger.error(f"获取视频时长异常: {str(e)}")
+            self.logger.warning(f"获取视频时长异常: {str(e)}")
             return 0.0
 
     def _cut_video_segments_by_subtitles(

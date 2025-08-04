@@ -66,10 +66,10 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
         self.logger.addHandler(handler)
 
     def process_video_with_progress(
-            self,
-            video_path: str,
-            subtitle_path: Optional[str] = None,
-            resume_from_cache: bool = True,
+        self,
+        video_path: str,
+        subtitle_path: Optional[str] = None,
+        resume_from_cache: bool = True,
     ) -> Dict[str, Any]:
         """
         处理视频配音的完整流程
@@ -285,7 +285,7 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
 
             if original_subtitle_ext == ".ass":
                 aligned_ass_path = (
-                        paths.output_dir / f"{Path(video_path).stem}_aligned.ass"
+                    paths.output_dir / f"{Path(video_path).stem}_aligned.ass"
                 )
                 sync_success = sync_srt_timestamps_to_ass(
                     original_subtitle_path,
@@ -298,8 +298,8 @@ class GUIDubbingPipeline(QObject, DubbingPipeline):
                     self.logger.error("ASS字幕时间戳同步失败")
             else:
                 aligned_subtitle_path = (
-                        paths.output_dir
-                        / f"{Path(video_path).stem}_aligned{original_subtitle_ext}"
+                    paths.output_dir
+                    / f"{Path(video_path).stem}_aligned{original_subtitle_ext}"
                 )
                 convert_success = convert_subtitle(
                     str(paths.aligned_srt), str(aligned_subtitle_path)
@@ -342,15 +342,15 @@ class VideoSubtitleMatcher:
     """视频字幕匹配器"""
 
     @staticmethod
-    def find_video_subtitle_pairs(folder_path: str) -> List[Tuple[str, Optional[str]]]:
+    def find_video_subtitle_pairs(folder_path: str) -> List[Tuple[str, str]]:
         """
-        在文件夹中查找视频和对应的字幕文件（默认递归搜索子文件夹）
+        在文件夹中查找视频和对应的字幕文件，只返回完全匹配的对
 
         Args:
             folder_path: 文件夹路径
 
         Returns:
-            List of (video_path, subtitle_path) tuples
+            List of (video_path, subtitle_path) tuples，只返回有完全匹配字幕的视频
         """
         folder = Path(folder_path)
         if not folder.exists():
@@ -371,50 +371,48 @@ class VideoSubtitleMatcher:
         # 支持的字幕格式
         subtitle_extensions = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
 
-        # 递归查找所有视频文件
-        video_files = []
+        # 递归查找所有视频文件，使用集合避免重复
+        video_files_set = set()
         for ext in video_extensions:
-            video_files.extend(folder.rglob(f"*{ext}"))
-            video_files.extend(folder.rglob(f"*{ext.upper()}"))
+            video_files_set.update(folder.rglob(f"*{ext}"))
+            video_files_set.update(folder.rglob(f"*{ext.upper()}"))
+        
+        # 转换为列表并排序
+        video_files = sorted(list(video_files_set))
 
         pairs = []
+        # 用于跟踪已匹配的字幕文件，避免重复匹配
+        matched_subtitles = set()
+
         for video_file in video_files:
             video_name = video_file.stem
             video_folder = video_file.parent
 
-            # 查找对应的字幕文件
+            # 只查找完全匹配的字幕文件
             subtitle_file = None
-
-            # 完全匹配
             for ext in subtitle_extensions:
                 potential_subtitle = video_folder / f"{video_name}{ext}"
-                if potential_subtitle.exists():
+                if (
+                    potential_subtitle.exists()
+                    and str(potential_subtitle) not in matched_subtitles
+                ):
                     subtitle_file = potential_subtitle
+                    matched_subtitles.add(str(potential_subtitle))
                     break
 
                 # 尝试大写扩展名
                 potential_subtitle = video_folder / f"{video_name}{ext.upper()}"
-                if potential_subtitle.exists():
+                if (
+                    potential_subtitle.exists()
+                    and str(potential_subtitle) not in matched_subtitles
+                ):
                     subtitle_file = potential_subtitle
+                    matched_subtitles.add(str(potential_subtitle))
                     break
 
-            # 如果没有完全匹配，尝试模糊匹配
-            if not subtitle_file:
-                # 在整个文件夹树中查找
-                for file in video_folder.rglob("*"):
-                    if file.suffix.lower() in subtitle_extensions:
-                        file_stem = file.stem
-                        # 检查是否包含视频文件名的主要部分
-                        if (
-                                video_name.lower() in file_stem.lower()
-                                or file_stem.lower() in video_name.lower()
-                        ):
-                            subtitle_file = file
-                            break
-
-            pairs.append(
-                (str(video_file), str(subtitle_file) if subtitle_file else None)
-            )
+            # 只有找到完全匹配的字幕文件才添加到结果中
+            if subtitle_file:
+                pairs.append((str(video_file), str(subtitle_file)))
 
         return pairs
 
@@ -438,10 +436,10 @@ class DubbingWorkerThread(QThread):
     processing_finished = Signal(bool, str, dict)  # 是否成功, 消息, 结果详情
 
     def __init__(
-            self,
-            video_path: str,
-            subtitle_path: Optional[str] = None,
-            resume_from_cache: bool = True,
+        self,
+        video_path: str,
+        subtitle_path: Optional[str] = None,
+        resume_from_cache: bool = True,
     ):
         super().__init__()
         self.video_path = video_path
@@ -485,10 +483,10 @@ class ParallelBatchDubbingWorkerThread(QThread):
     batch_finished = Signal(bool, str, dict)  # 是否成功, 消息, 结果详情
 
     def __init__(
-            self,
-            video_subtitle_pairs: List[Tuple[str, Optional[str]]],
-            resume_from_cache: bool = True,
-            max_workers: int = None,
+        self,
+        video_subtitle_pairs: List[Tuple[str, str]],
+        resume_from_cache: bool = True,
+        max_workers: int = None,
     ):
         super().__init__()
         self.pairs = video_subtitle_pairs
@@ -529,7 +527,7 @@ class ParallelBatchDubbingWorkerThread(QThread):
 
 class DubbingGUI(QMainWindow):
     """DubbingX 主窗口"""
-    
+
     # 信号定义
     log_message = Signal(str)  # 日志消息
 
@@ -1113,7 +1111,15 @@ class DubbingGUI(QMainWindow):
                 background-color: #e7f3ff;
                 color: #0d6efd;
             }
-            QHeaderView::section {
+            QHeaderView::section:horizontal {
+                background-color: #f8f9fa;
+                color: #495057;
+                padding: 8px;
+                border: 1px solid #dee2e6;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QHeaderView::section:vertical {
                 background-color: #f8f9fa;
                 color: #495057;
                 padding: 8px;
@@ -1125,8 +1131,14 @@ class DubbingGUI(QMainWindow):
                 background-color: #f8f9fa;
                 border: 1px solid #dee2e6;
             }
+            QTableWidget#verticalHeader {
+                background-color: #f8f9fa;
+            }
         """
         )
+        
+        # 隐藏垂直表头（序号列）
+        self.file_table.verticalHeader().setVisible(False)
 
         # 限制表格高度
         self.file_table.setMaximumHeight(180)
@@ -1288,7 +1300,7 @@ class DubbingGUI(QMainWindow):
     def append_log_message(self, message: str):
         """追加日志消息到文本框"""
         self.log_text.append(message)
-        
+
     def setup_logging(self):
         """设置日志"""
         # 创建日志处理器
@@ -1371,11 +1383,10 @@ class DubbingGUI(QMainWindow):
             self.video_subtitle_pairs = pairs
             self.update_file_table()
 
-            matched_count = sum(1 for _, subtitle in pairs if subtitle)
             QMessageBox.information(
                 self,
                 "扫描完成",
-                f"找到 {len(pairs)} 个视频文件，其中 {matched_count} 个有匹配的字幕文件。\n（已自动搜索所有子文件夹）",
+                f"找到 {len(pairs)} 个有完全匹配字幕的视频文件。\n（已自动搜索所有子文件夹，只显示文件名完全匹配的视频-字幕对）",
             )
 
         except Exception as e:
@@ -1395,32 +1406,21 @@ class DubbingGUI(QMainWindow):
             video_item.setToolTip(video_path)
             self.file_table.setItem(i, 0, video_item)
 
-            # 字幕文件名
-            if subtitle_path:
-                subtitle_name = Path(subtitle_path).name
-                subtitle_item = QTableWidgetItem(subtitle_name)
-                subtitle_item.setToolTip(subtitle_path)
-                self.file_table.setItem(i, 1, subtitle_item)
-            else:
-                item = QTableWidgetItem("未找到匹配字幕")
-                # 设置红色文字
-                item.setForeground(QColor("#dc3545"))
-                self.file_table.setItem(i, 1, item)
+            # 字幕文件名（现在一定有匹配的字幕）
+            subtitle_name = Path(subtitle_path).name
+            subtitle_item = QTableWidgetItem(subtitle_name)
+            subtitle_item.setToolTip(subtitle_path)
+            self.file_table.setItem(i, 1, subtitle_item)
 
-            # 状态
-            if subtitle_path:
-                status_item = QTableWidgetItem("就绪")
-                # 设置绿色文字
-                status_item.setForeground(QColor("#198754"))
-            else:
-                status_item = QTableWidgetItem("缺少字幕")
-                # 设置红色文字
-                status_item.setForeground(QColor("#dc3545"))
+            # 状态（现在一定是就绪状态）
+            status_item = QTableWidgetItem("就绪")
+            # 设置绿色文字
+            status_item.setForeground(QColor("#198754"))
             self.file_table.setItem(i, 2, status_item)
 
             # 选择框
             checkbox = QCheckBox()
-            checkbox.setChecked(subtitle_path is not None)  # 只选择有字幕的项
+            checkbox.setChecked(True)  # 现在所有项都有字幕，默认全选
             self.file_table.setCellWidget(i, 3, checkbox)
 
     def select_all_files(self):
@@ -1580,10 +1580,9 @@ class DubbingGUI(QMainWindow):
             self.worker_thread.cancel()
             self.worker_thread.wait()
 
-
         if (
-                self.parallel_batch_worker_thread
-                and self.parallel_batch_worker_thread.isRunning()
+            self.parallel_batch_worker_thread
+            and self.parallel_batch_worker_thread.isRunning()
         ):
             self.parallel_batch_worker_thread.cancel()
             self.parallel_batch_worker_thread.wait()
@@ -1598,7 +1597,7 @@ class DubbingGUI(QMainWindow):
         self.current_file_label.setText(f"当前处理文件: {Path(filename).name}")
 
     def parallel_batch_finished(
-            self, success: bool, message: str, result: Dict[str, Any]
+        self, success: bool, message: str, result: Dict[str, Any]
     ):
         """并行批量处理完成"""
         # 更新UI状态
