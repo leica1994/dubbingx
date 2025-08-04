@@ -147,6 +147,8 @@ class MediaProcessor:
                 output_params['vcodec'] = 'libx264'
             elif output_ext in ['.mkv']:
                 output_params['vcodec'] = 'libx264'
+            elif output_ext in ['.ts']:
+                output_params['vcodec'] = 'libx264'
             elif output_ext in ['.webm']:
                 output_params['vcodec'] = 'libvpx-vp9'
                 output_params.pop('preset')  # VP9 不支持preset参数
@@ -1156,6 +1158,11 @@ class MediaProcessor:
                     'preset': 'fast'
                 })
             elif output_ext in ['.mkv']:
+                output_params.update({
+                    'vcodec': 'libx264',
+                    'preset': 'fast'
+                })
+            elif output_ext in ['.ts']:
                 output_params.update({
                     'vcodec': 'libx264',
                     'preset': 'fast'

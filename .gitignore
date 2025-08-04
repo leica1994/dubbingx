@@ -50,6 +50,7 @@ logs/
 *.avi
 *.mov
 *.mkv
+*.ts
 *.flv
 
 # 模型文件
