@@ -1199,4 +1199,3 @@ def batch_process_texts(
     return results
 
 
-# ==================== 管理函数 ====================

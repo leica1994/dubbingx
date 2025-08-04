@@ -63,10 +63,10 @@ class AudioAlignProcessor:
         self.sample_rate = sample_rate
 
     def align_audio_with_subtitles(
-            self,
-            tts_results_path: str,
-            srt_path: str,
-            output_path: Optional[str] = None,
+        self,
+        tts_results_path: str,
+        srt_path: str,
+        output_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """根据TTS结果和SRT字幕生成对齐的音频文件"""
         try:
@@ -86,16 +86,12 @@ class AudioAlignProcessor:
                 return {"success": False, "error": "SRT字幕解析失败"}
 
             # 验证数据一致性
-            if not self._validate_data_consistency(
-                    tts_segments, subtitle_entries
-            ):
+            if not self._validate_data_consistency(tts_segments, subtitle_entries):
                 return {"success": False, "error": "TTS结果与字幕数据不一致"}
 
             # 生成默认输出路径
             if output_path is None:
-                output_path = self._generate_default_output_path(
-                    tts_results_path
-                )
+                output_path = self._generate_default_output_path(tts_results_path)
 
             # 生成音频片段列表
             audio_segments = self._generate_audio_segments(
@@ -107,9 +103,7 @@ class AudioAlignProcessor:
                 max(segment.end_time for segment in audio_segments)
                 if audio_segments
                 else (
-                    subtitle_entries[-1].end_time_seconds()
-                    if subtitle_entries
-                    else 0
+                    subtitle_entries[-1].end_time_seconds() if subtitle_entries else 0
                 )
             )
 
@@ -135,9 +129,7 @@ class AudioAlignProcessor:
                     "duration": round(segment.duration, 8),
                     "file_path": segment.file_path,
                     "is_silence": segment.is_silence,
-                    "sample_rate": file_info.get(
-                        "sample_rate", self.sample_rate
-                    ),
+                    "sample_rate": file_info.get("sample_rate", self.sample_rate),
                     "audio_length": file_info.get("audio_length", 0),
                     "file_size": file_info.get("file_size", 0),
                 }
@@ -162,12 +154,8 @@ class AudioAlignProcessor:
                 "total_duration": round(total_duration, 8),
                 "subtitle_count": len(subtitle_entries),
                 "audio_segments": len(audio_segments),
-                "silence_segments": sum(
-                    1 for seg in audio_segments if seg.is_silence
-                ),
-                "tts_segments": sum(
-                    1 for seg in audio_segments if not seg.is_silence
-                ),
+                "silence_segments": sum(1 for seg in audio_segments if seg.is_silence),
+                "tts_segments": sum(1 for seg in audio_segments if not seg.is_silence),
                 "sample_rate": self.sample_rate,
                 "aligned_audio_segments": aligned_audio_segments,
                 "processing_info": {
@@ -178,9 +166,7 @@ class AudioAlignProcessor:
             }
 
             # 保存结果到JSON文件
-            json_file_path = self._save_results_to_json(
-                result, tts_results_path
-            )
+            json_file_path = self._save_results_to_json(result, tts_results_path)
             if json_file_path:
                 result["results_json_file"] = json_file_path
 
@@ -221,9 +207,7 @@ class AudioAlignProcessor:
                     "file_size": file_size,
                     "file_exists": True,
                     "duration": (
-                        round(audio_length / sample_rate, 8)
-                        if sample_rate > 0
-                        else 0
+                        round(audio_length / sample_rate, 8) if sample_rate > 0 else 0
                     ),
                 }
             except Exception:
@@ -236,9 +220,7 @@ class AudioAlignProcessor:
                 }
 
         except Exception as e:
-            self.logger.warning(
-                f"获取音频文件信息失败: {file_path}, 错误: {str(e)}"
-            )
+            self.logger.warning(f"获取音频文件信息失败: {file_path}, 错误: {str(e)}")
             return {
                 "sample_rate": self.sample_rate,
                 "audio_length": 0,
@@ -357,10 +339,10 @@ class AudioAlignProcessor:
             hours, minutes, seconds = time_part.split(":")
 
             total_seconds = (
-                    int(hours) * 3600
-                    + int(minutes) * 60
-                    + int(seconds)
-                    + int(ms_part) / 1000
+                int(hours) * 3600
+                + int(minutes) * 60
+                + int(seconds)
+                + int(ms_part) / 1000
             )
             return total_seconds
         except Exception:
@@ -368,9 +350,9 @@ class AudioAlignProcessor:
             return 0.0
 
     def _validate_data_consistency(
-            self,
-            tts_segments: List[AudioSegment],
-            subtitle_entries: List[SubtitleEntry],
+        self,
+        tts_segments: List[AudioSegment],
+        subtitle_entries: List[SubtitleEntry],
     ) -> bool:
         """验证TTS结果与字幕数据的一致性"""
         try:
@@ -380,12 +362,8 @@ class AudioAlignProcessor:
                 )
 
             for segment in tts_segments:
-                if not segment.is_silence and not os.path.exists(
-                        segment.file_path
-                ):
-                    self.logger.error(
-                        f"TTS音频文件不存在: {segment.file_path}"
-                    )
+                if not segment.is_silence and not os.path.exists(segment.file_path):
+                    self.logger.error(f"TTS音频文件不存在: {segment.file_path}")
                     return False
 
             return True
@@ -395,10 +373,10 @@ class AudioAlignProcessor:
             return False
 
     def _generate_audio_segments(
-            self,
-            tts_segments: List[AudioSegment],
-            subtitle_entries: List[SubtitleEntry],
-            srt_path: str,
+        self,
+        tts_segments: List[AudioSegment],
+        subtitle_entries: List[SubtitleEntry],
+        srt_path: str,
     ) -> List[AudioSegment]:
         """生成音频片段列表，包括静音片段"""
         try:
@@ -431,12 +409,12 @@ class AudioAlignProcessor:
                 # 如果有时间差距，生成静音片段
                 if time_gap > 0.01:
                     silence_path = (
-                            output_dir / f"silence_{i:04d}_{current_time:.3f}.wav"
+                        output_dir / f"silence_{i:04d}_{current_time:.3f}.wav"
                     )
                     silence_duration = time_gap
 
                     if self._generate_silence_audio(
-                            str(silence_path), silence_duration
+                        str(silence_path), silence_duration
                     ):
                         silence_segment = AudioSegment(
                             index=len(audio_segments),
@@ -467,13 +445,12 @@ class AudioAlignProcessor:
                 else:
                     # 如果没有对应的TTS片段，生成静音片段
                     silence_path = (
-                            output_dir
-                            / f"silence_{i:04d}_missing_{current_time:.3f}.wav"
+                        output_dir / f"silence_{i:04d}_missing_{current_time:.3f}.wav"
                     )
                     silence_duration = subtitle_duration
 
                     if self._generate_silence_audio(
-                            str(silence_path), silence_duration
+                        str(silence_path), silence_duration
                     ):
                         silence_segment = AudioSegment(
                             index=len(audio_segments),
@@ -493,9 +470,7 @@ class AudioAlignProcessor:
             self.logger.error(f"音频片段生成失败: {str(e)}")
             return []
 
-    def _generate_silence_audio(
-            self, output_path: str, duration: float
-    ) -> bool:
+    def _generate_silence_audio(self, output_path: str, duration: float) -> bool:
         """生成静音音频文件"""
         try:
             duration = max(0.01, duration)
@@ -515,9 +490,9 @@ class AudioAlignProcessor:
             if "tts_output" in tts_path.parts:
                 tts_output_index = tts_path.parts.index("tts_output")
                 output_parts = (
-                        list(tts_path.parts[:tts_output_index])
-                        + ["aligned_audio"]
-                        + [f"aligned_{tts_path.stem}.wav"]
+                    list(tts_path.parts[:tts_output_index])
+                    + ["aligned_audio"]
+                    + [f"aligned_{tts_path.stem}.wav"]
                 )
                 output_path = Path(*output_parts)
             else:
@@ -532,7 +507,7 @@ class AudioAlignProcessor:
             return "aligned_audio.wav"
 
     def _concatenate_audio_segments(
-            self, audio_segments: List[AudioSegment], total_duration: float
+        self, audio_segments: List[AudioSegment], total_duration: float
     ) -> np.ndarray:
         """拼接音频片段"""
         try:
@@ -564,28 +539,22 @@ class AudioAlignProcessor:
                         continue
 
                     end_sample = min(end_sample, total_samples)
-                    copy_length = min(
-                        len(audio_data), end_sample - start_sample
-                    )
+                    copy_length = min(len(audio_data), end_sample - start_sample)
 
                     if copy_length > 0:
-                        merged_audio[
-                        start_sample: start_sample + copy_length
-                        ] = audio_data[:copy_length]
+                        merged_audio[start_sample : start_sample + copy_length] = (
+                            audio_data[:copy_length]
+                        )
 
                 except Exception as e:
-                    self.logger.error(
-                        f"处理音频片段失败: {segment.index} - {str(e)}"
-                    )
+                    self.logger.error(f"处理音频片段失败: {segment.index} - {str(e)}")
                     continue
 
             return merged_audio
 
         except Exception as e:
             self.logger.error(f"音频片段拼接失败: {str(e)}")
-            return np.zeros(
-                int(self.sample_rate * total_duration), dtype=np.float32
-            )
+            return np.zeros(int(self.sample_rate * total_duration), dtype=np.float32)
 
     def _save_merged_audio(self, audio_data: np.ndarray, output_path: str):
         """保存合并后的音频"""
@@ -604,7 +573,7 @@ class AudioAlignProcessor:
             raise
 
     def get_processing_statistics(
-            self, audio_segments: List[AudioSegment]
+        self, audio_segments: List[AudioSegment]
     ) -> Dict[str, Any]:
         """获取处理统计信息"""
         try:
@@ -619,12 +588,8 @@ class AudioAlignProcessor:
             return {
                 "total_segments": len(audio_segments),
                 "total_duration": round(total_duration, 8),
-                "silence_segments": sum(
-                    1 for seg in audio_segments if seg.is_silence
-                ),
-                "tts_segments": sum(
-                    1 for seg in audio_segments if not seg.is_silence
-                ),
+                "silence_segments": sum(1 for seg in audio_segments if seg.is_silence),
+                "tts_segments": sum(1 for seg in audio_segments if not seg.is_silence),
                 "silence_duration": round(silence_duration, 8),
                 "tts_duration": round(tts_duration, 8),
                 "silence_ratio": (
@@ -645,17 +610,15 @@ class AudioAlignProcessor:
             cleaned_count = 0
             for segment in audio_segments:
                 if (
-                        segment.is_silence
-                        and segment.file_path
-                        and os.path.exists(segment.file_path)
+                    segment.is_silence
+                    and segment.file_path
+                    and os.path.exists(segment.file_path)
                 ):
                     try:
                         os.remove(segment.file_path)
                         cleaned_count += 1
                     except Exception:
-                        self.logger.warning(
-                            f"清理静音文件失败: {segment.file_path}"
-                        )
+                        self.logger.warning(f"清理静音文件失败: {segment.file_path}")
 
             if cleaned_count > 0:
                 self.logger.info(f"清理了 {cleaned_count} 个静音文件")
@@ -664,7 +627,7 @@ class AudioAlignProcessor:
             self.logger.error(f"文件清理失败: {str(e)}")
 
     def _save_results_to_json(
-            self, results: Dict[str, Any], tts_results_path: str
+        self, results: Dict[str, Any], tts_results_path: str
     ) -> str:
         """保存结果到JSON文件"""
         try:
@@ -733,16 +696,16 @@ class AudioAlignProcessor:
             return ""
 
     def _load_cached_results(
-            self, tts_results_path: str, srt_path: str
+        self, tts_results_path: str, srt_path: str
     ) -> Optional[Dict[str, Any]]:
         """加载缓存的结果（已移除缓存功能）"""
         return None
 
     def generate_aligned_srt(
-            self,
-            aligned_results_path: str,
-            original_srt_path: str,
-            output_srt_path: Optional[str] = None,
+        self,
+        aligned_results_path: str,
+        original_srt_path: str,
+        output_srt_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         根据对齐结果生成新的SRT字幕文件
@@ -756,9 +719,7 @@ class AudioAlignProcessor:
             Dict[str, Any]: 处理结果
         """
         try:
-            self.logger.info(
-                f"开始生成对齐后的SRT字幕: {aligned_results_path}"
-            )
+            self.logger.info(f"开始生成对齐后的SRT字幕: {aligned_results_path}")
 
             # 加载对齐结果
             if not os.path.exists(aligned_results_path):
@@ -779,31 +740,23 @@ class AudioAlignProcessor:
                 return {"success": False, "error": "原始SRT字幕解析失败"}
 
             # 获取对齐后的音频片段
-            aligned_segments = aligned_results.get(
-                "aligned_audio_segments", []
-            )
+            aligned_segments = aligned_results.get("aligned_audio_segments", [])
 
             # 提取TTS片段（非静音片段）
             tts_segments = [
-                seg
-                for seg in aligned_segments
-                if not seg.get("is_silence", False)
+                seg for seg in aligned_segments if not seg.get("is_silence", False)
             ]
 
             # 生成默认输出路径
             if output_srt_path is None:
-                output_srt_path = self._generate_default_srt_path(
-                    aligned_results_path
-                )
+                output_srt_path = self._generate_default_srt_path(aligned_results_path)
 
             # 确保输出目录存在
             output_dir = Path(output_srt_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # 生成新的SRT内容
-            srt_content = self._generate_srt_content(
-                tts_segments, original_subtitles
-            )
+            srt_content = self._generate_srt_content(tts_segments, original_subtitles)
 
             # 保存SRT文件
             with open(output_srt_path, "w", encoding="utf-8") as f:
@@ -813,9 +766,7 @@ class AudioAlignProcessor:
                 "success": True,
                 "output_srt_path": output_srt_path,
                 "subtitle_count": len(tts_segments),
-                "total_duration": round(
-                    aligned_results.get("total_duration", 0), 8
-                ),
+                "total_duration": round(aligned_results.get("total_duration", 0), 8),
                 "processing_info": {
                     "aligned_results_path": aligned_results_path,
                     "original_srt_path": original_srt_path,
@@ -838,17 +789,13 @@ class AudioAlignProcessor:
             if "aligned_audio" in aligned_path.parts:
                 aligned_index = aligned_path.parts.index("aligned_audio")
                 output_parts = (
-                        list(aligned_path.parts[:aligned_index])
-                        + ["aligned_audio"]
-                        + [
-                            f"{aligned_path.stem.replace('_results', '')}_aligned.srt"
-                        ]
+                    list(aligned_path.parts[:aligned_index])
+                    + ["aligned_audio"]
+                    + [f"{aligned_path.stem.replace('_results', '')}_aligned.srt"]
                 )
                 output_path = Path(*output_parts)
             else:
-                output_path = (
-                        aligned_path.parent / f"{aligned_path.stem}_aligned.srt"
-                )
+                output_path = aligned_path.parent / f"{aligned_path.stem}_aligned.srt"
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
             return str(output_path)
@@ -858,9 +805,9 @@ class AudioAlignProcessor:
             return "aligned_audio.srt"
 
     def _generate_srt_content(
-            self,
-            tts_segments: List[Dict[str, Any]],
-            original_subtitles: List[SubtitleEntry],
+        self,
+        tts_segments: List[Dict[str, Any]],
+        original_subtitles: List[SubtitleEntry],
     ) -> str:
         """生成SRT文件内容"""
         try:
@@ -886,9 +833,7 @@ class AudioAlignProcessor:
 
                 # 构建SRT条目
                 srt_lines.append(str(i + 1))  # 序号
-                srt_lines.append(
-                    f"{start_time_str} --> {end_time_str}"
-                )  # 时间戳
+                srt_lines.append(f"{start_time_str} --> {end_time_str}")  # 时间戳
                 srt_lines.append(subtitle_text)  # 文本
                 srt_lines.append("")  # 空行
 
@@ -913,7 +858,7 @@ class AudioAlignProcessor:
             return "00:00:00,000"
 
     def process_video_speed_adjustment(
-            self, silent_video_path: str, original_srt_path: str, new_srt_path: str
+        self, silent_video_path: str, original_srt_path: str, new_srt_path: str
     ) -> Dict[str, Any]:
         """
         处理视频变速调整：根据原字幕和新字幕进行视频分割、变速处理和拼接
@@ -962,7 +907,7 @@ class AudioAlignProcessor:
             return {"success": False, "error": str(e)}
 
     def _check_cache_and_resume(
-            self, silent_video_path: str, original_srt_path: str, new_srt_path: str
+        self, silent_video_path: str, original_srt_path: str, new_srt_path: str
     ) -> Optional[Dict[str, Any]]:
         """检查缓存并决定从哪个步骤继续处理"""
         self.logger.info("检查是否存在缓存结果...")
@@ -1029,21 +974,21 @@ class AudioAlignProcessor:
 
         return {
             "analysis_completed": output_dir
-                                  / f"speed_adjusted_{video_file.stem}_analysis.json",
+            / f"speed_adjusted_{video_file.stem}_analysis.json",
             "segmentation_completed": output_dir
-                                      / f"speed_adjusted_{video_file.stem}_segmentation.json",
+            / f"speed_adjusted_{video_file.stem}_segmentation.json",
             "speed_adjustment_completed": output_dir
-                                          / f"speed_adjusted_{video_file.stem}_speed_adjustment.json",
+            / f"speed_adjusted_{video_file.stem}_speed_adjustment.json",
             "completed": output_dir
-                         / f"speed_adjusted_{video_file.stem}_completed.json",
+            / f"speed_adjusted_{video_file.stem}_completed.json",
         }
 
     def _load_step_cache(
-            self,
-            cache_file: Path,
-            silent_video_path: str,
-            original_srt_path: str,
-            new_srt_path: str,
+        self,
+        cache_file: Path,
+        silent_video_path: str,
+        original_srt_path: str,
+        new_srt_path: str,
     ) -> Optional[Dict[str, Any]]:
         """加载指定步骤的缓存文件"""
         try:
@@ -1057,13 +1002,11 @@ class AudioAlignProcessor:
             return cached_results
 
         except Exception as e:
-            self.logger.warning(
-                f"加载缓存文件失败: {cache_file}, 错误: {str(e)}"
-            )
+            self.logger.warning(f"加载缓存文件失败: {cache_file}, 错误: {str(e)}")
             return None
 
     def _save_step_cache(
-            self, results: Dict[str, Any], silent_video_path: str, step_name: str
+        self, results: Dict[str, Any], silent_video_path: str, step_name: str
     ) -> str:
         """保存指定步骤的缓存文件"""
         try:
@@ -1119,7 +1062,7 @@ class AudioAlignProcessor:
             return ""
 
     def _perform_analysis(
-            self, silent_video_path: str, original_srt_path: str, new_srt_path: str
+        self, silent_video_path: str, original_srt_path: str, new_srt_path: str
     ) -> Dict[str, Any]:
         """执行字幕分析和映射关系分析"""
         self.logger.info("开始完整分析处理...")
@@ -1159,9 +1102,7 @@ class AudioAlignProcessor:
         )
 
         # 计算变速ratio
-        speed_adjusted_segments = self._calculate_final_speed_ratios(
-            compact_segments
-        )
+        speed_adjusted_segments = self._calculate_final_speed_ratios(compact_segments)
 
         # 构建完整的处理结果
         processing_result = {
@@ -1212,15 +1153,15 @@ class AudioAlignProcessor:
         return processing_result
 
     def _perform_video_segmentation(
-            self, processing_result: Dict[str, Any], silent_video_path: str
+        self, processing_result: Dict[str, Any], silent_video_path: str
     ) -> Dict[str, Any]:
         """执行视频分割"""
         # 检查是否已经有分割完成的缓存文件
         cache_files = self._get_step_cache_files(silent_video_path)
-        
+
         if cache_files["segmentation_completed"].exists():
             self.logger.info("分割步骤已完成，从缓存加载分割结果")
-            
+
             # 从缓存中恢复视频分割的结果
             cached_result = self._load_step_cache(
                 cache_files["segmentation_completed"],
@@ -1228,16 +1169,20 @@ class AudioAlignProcessor:
                 processing_result.get("original_srt_path", ""),
                 processing_result.get("new_srt_path", ""),
             )
-            
+
             if cached_result and cached_result.get("speed_adjusted_segments"):
                 # 从缓存中恢复分割后的片段信息
-                processing_result["speed_adjusted_segments"] = cached_result["speed_adjusted_segments"]
+                processing_result["speed_adjusted_segments"] = cached_result[
+                    "speed_adjusted_segments"
+                ]
                 updated_segments = cached_result["speed_adjusted_segments"]
-                
+
                 # 确保执行步骤中包含分割完成的记录
                 if "processing_info" in cached_result:
-                    processing_result["processing_info"] = cached_result["processing_info"]
-                
+                    processing_result["processing_info"] = cached_result[
+                        "processing_info"
+                    ]
+
                 self.logger.info(
                     f"从缓存恢复分割结果，共 {len(updated_segments)} 个片段文件"
                 )
@@ -1253,7 +1198,7 @@ class AudioAlignProcessor:
 
         if updated_segments:
             processing_result["speed_adjusted_segments"] = updated_segments
-            
+
             # 只有在没有缓存的情况下才添加执行步骤记录
             if not cache_files["segmentation_completed"].exists():
                 # 更新执行步骤
@@ -1280,7 +1225,7 @@ class AudioAlignProcessor:
         return processing_result
 
     def _perform_speed_adjustment(
-            self, processing_result: Dict[str, Any], silent_video_path: str
+        self, processing_result: Dict[str, Any], silent_video_path: str
     ) -> Dict[str, Any]:
         """执行变速处理"""
         # 检查是否已经有变速完成的缓存文件
@@ -1289,7 +1234,7 @@ class AudioAlignProcessor:
 
         if cache_files["speed_adjustment_completed"].exists():
             self.logger.info("变速处理已完成，从缓存加载变速结果")
-            
+
             # 从缓存中恢复变速处理的结果
             cached_result = self._load_step_cache(
                 cache_files["speed_adjustment_completed"],
@@ -1297,16 +1242,20 @@ class AudioAlignProcessor:
                 processing_result.get("original_srt_path", ""),
                 processing_result.get("new_srt_path", ""),
             )
-            
+
             if cached_result and cached_result.get("speed_adjusted_segments"):
                 # 从缓存中恢复变速后的片段信息
-                processing_result["speed_adjusted_segments"] = cached_result["speed_adjusted_segments"]
+                processing_result["speed_adjusted_segments"] = cached_result[
+                    "speed_adjusted_segments"
+                ]
                 updated_segments = cached_result["speed_adjusted_segments"]
-                
+
                 # 确保执行步骤中包含变速完成的记录
                 if "processing_info" in cached_result:
-                    processing_result["processing_info"] = cached_result["processing_info"]
-                
+                    processing_result["processing_info"] = cached_result[
+                        "processing_info"
+                    ]
+
                 self.logger.info(
                     f"从缓存恢复变速结果，共 {len(updated_segments)} 个片段"
                 )
@@ -1314,9 +1263,7 @@ class AudioAlignProcessor:
                 self.logger.warning("缓存文件中未找到变速处理结果")
         else:
             self.logger.info("开始变速处理...")
-            speed_processed_segments = self._apply_speed_to_segments(
-                updated_segments
-            )
+            speed_processed_segments = self._apply_speed_to_segments(updated_segments)
             if speed_processed_segments:
                 updated_segments = speed_processed_segments
                 processing_result["speed_adjusted_segments"] = updated_segments
@@ -1339,19 +1286,15 @@ class AudioAlignProcessor:
                     "speed_adjustment_completed",
                 )
                 if final_json_file_path:
-                    processing_result["results_json_file"] = (
-                        final_json_file_path
-                    )
-                    self.logger.info(
-                        f"变速处理结果已更新保存: {final_json_file_path}"
-                    )
+                    processing_result["results_json_file"] = final_json_file_path
+                    self.logger.info(f"变速处理结果已更新保存: {final_json_file_path}")
             else:
                 self.logger.warning("片段变速处理失败，保留原始片段")
 
         return processing_result
 
     def _perform_video_concatenation(
-            self, processing_result: Dict[str, Any], silent_video_path: str
+        self, processing_result: Dict[str, Any], silent_video_path: str
     ) -> Dict[str, Any]:
         """执行视频拼接"""
         # 检查是否已经有完成的缓存文件
@@ -1360,7 +1303,7 @@ class AudioAlignProcessor:
 
         if cache_files["completed"].exists():
             self.logger.info("拼接步骤已完成，从缓存加载拼接结果")
-            
+
             # 加载已完成缓存的详细信息，确保包含最终视频路径
             cached_result = self._load_step_cache(
                 cache_files["completed"],
@@ -1368,23 +1311,32 @@ class AudioAlignProcessor:
                 processing_result.get("original_srt_path", ""),
                 processing_result.get("new_srt_path", ""),
             )
-            
+
             if cached_result and cached_result.get("final_video_path"):
                 # 从缓存中恢复最终视频路径信息
-                processing_result["final_video_path"] = cached_result["final_video_path"]
-                processing_result["final_video_duration"] = cached_result.get("final_video_duration", 8)
-                processing_result["concatenation_success"] = cached_result.get("concatenation_success", True)
-                
+                processing_result["final_video_path"] = cached_result[
+                    "final_video_path"
+                ]
+                processing_result["final_video_duration"] = cached_result.get(
+                    "final_video_duration", 8
+                )
+                processing_result["concatenation_success"] = cached_result.get(
+                    "concatenation_success", True
+                )
+
                 # 确保执行步骤中包含拼接完成的记录
                 if "processing_info" in cached_result:
-                    processing_result["processing_info"] = cached_result["processing_info"]
-                
-                self.logger.info(f"从缓存恢复最终视频路径: {processing_result['final_video_path']}")
+                    processing_result["processing_info"] = cached_result[
+                        "processing_info"
+                    ]
+
+                self.logger.info(
+                    f"从缓存恢复最终视频路径: {processing_result['final_video_path']}"
+                )
             else:
                 self.logger.warning("缓存文件中未找到最终视频路径信息")
         elif updated_segments and any(
-                seg.get("speed_processing_success", False)
-                for seg in updated_segments
+            seg.get("speed_processing_success", False) for seg in updated_segments
         ):
             self.logger.info("开始拼接变速后的视频片段...")
             final_video_result = self._concatenate_speed_adjusted_segments(
@@ -1394,8 +1346,8 @@ class AudioAlignProcessor:
                 processing_result["final_video_path"] = final_video_result[
                     "output_path"
                 ]
-                processing_result["final_video_duration"] = (
-                    final_video_result.get("total_duration", 8)
+                processing_result["final_video_duration"] = final_video_result.get(
+                    "total_duration", 8
                 )
                 processing_result["concatenation_success"] = True
                 # 更新执行步骤
@@ -1406,25 +1358,19 @@ class AudioAlignProcessor:
                         "timestamp": datetime.now().isoformat(),
                     }
                 )
-                self.logger.info(
-                    f"视频拼接完成: {final_video_result['output_path']}"
-                )
+                self.logger.info(f"视频拼接完成: {final_video_result['output_path']}")
 
                 # 拼接完成后，最终保存完整结果
                 final_json_file_path = self._save_step_cache(
                     processing_result, silent_video_path, "completed"
                 )
                 if final_json_file_path:
-                    processing_result["results_json_file"] = (
-                        final_json_file_path
-                    )
-                    self.logger.info(
-                        f"最终处理结果已保存: {final_json_file_path}"
-                    )
+                    processing_result["results_json_file"] = final_json_file_path
+                    self.logger.info(f"最终处理结果已保存: {final_json_file_path}")
             else:
                 processing_result["concatenation_success"] = False
-                processing_result["concatenation_error"] = (
-                    final_video_result.get("error", "拼接失败")
+                processing_result["concatenation_error"] = final_video_result.get(
+                    "error", "拼接失败"
                 )
                 self.logger.warning("视频拼接失败，请检查片段文件")
         else:
@@ -1435,34 +1381,37 @@ class AudioAlignProcessor:
     def _get_actual_video_duration(self, video_path: str) -> float:
         """
         获取视频文件的实际时长（用于验证拼接结果）
-        
+
         Args:
             video_path: 视频文件路径
-            
+
         Returns:
             float: 实际视频时长（秒）
         """
         try:
             if not os.path.exists(video_path):
                 return 0.0
-                
+
             result = subprocess.run(
                 [
                     "ffprobe",
-                    "-v", "quiet",
-                    "-show_entries", "format=duration",
-                    "-of", "csv=p=0",
+                    "-v",
+                    "quiet",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "csv=p=0",
                     video_path,
                 ],
                 capture_output=True,
                 text=True,
-                encoding='utf-8',
-                timeout=30
+                encoding="utf-8",
+                timeout=30,
             )
-            
+
             if result.returncode == 0 and result.stdout.strip():
                 duration_str = result.stdout.strip()
-                if duration_str.lower() in ['n/a', 'na', '']:
+                if duration_str.lower() in ["n/a", "na", ""]:
                     self.logger.warning(f"ffprobe返回无效时长: {duration_str}")
                     return 0.0
                 try:
@@ -1475,11 +1424,10 @@ class AudioAlignProcessor:
             else:
                 self.logger.warning(f"无法获取视频时长: {result.stderr}")
                 return 0.0
-                
+
         except Exception as e:
             self.logger.error(f"获取实际视频时长失败: {str(e)}")
             return 0.0
-
 
     def _get_video_duration(self, video_path: str) -> float:
         """获取视频总时长"""
@@ -1497,12 +1445,12 @@ class AudioAlignProcessor:
                 ],
                 capture_output=True,
                 text=True,
-                encoding='utf-8',
+                encoding="utf-8",
             )
 
             if result.returncode == 0:
                 duration_str = result.stdout.strip()
-                if duration_str.lower() in ['n/a', 'na', '']:
+                if duration_str.lower() in ["n/a", "na", ""]:
                     self.logger.error(f"ffprobe返回无效时长: {duration_str}")
                     return 0.0
                 try:
@@ -1519,7 +1467,7 @@ class AudioAlignProcessor:
             return 0.0
 
     def _cut_video_segments_by_subtitles(
-            self, subtitles: List[SubtitleEntry], video_duration: float
+        self, subtitles: List[SubtitleEntry], video_duration: float
     ) -> List[VideoSegment]:
         """根据字幕时间戳切割视频片段"""
         try:
@@ -1583,9 +1531,9 @@ class AudioAlignProcessor:
             return []
 
     def _calculate_speed_ratios(
-            self,
-            video_segments: List[VideoSegment],
-            new_subtitles: List[SubtitleEntry],
+        self,
+        video_segments: List[VideoSegment],
+        new_subtitles: List[SubtitleEntry],
     ) -> List[Dict[str, Any]]:
         """计算每个视频片段的变速比例，并确保目标时间戳连续"""
         try:
@@ -1606,8 +1554,8 @@ class AudioAlignProcessor:
                 }
 
                 if (
-                        segment.segment_type == "subtitle"
-                        and segment.subtitle_index is not None
+                    segment.segment_type == "subtitle"
+                    and segment.subtitle_index is not None
                 ):
                     # 对于字幕片段，使用新字幕的持续时间
                     subtitle_idx = segment.subtitle_index
@@ -1616,7 +1564,7 @@ class AudioAlignProcessor:
                         new_subtitle = new_subtitles[subtitle_idx]
                         new_duration = new_subtitle.duration_seconds()
                         original_duration = (
-                                segment.original_duration or segment.duration
+                            segment.original_duration or segment.duration
                         )
 
                         if original_duration > 0:
@@ -1683,8 +1631,9 @@ class AudioAlignProcessor:
         """确保数值保持3位小数精度"""
         return float(f"{value:.3f}")
 
-    
-    def _adjust_gap_segments_for_continuity(self, segments: List[Dict[str, Any]]) -> None:
+    def _adjust_gap_segments_for_continuity(
+        self, segments: List[Dict[str, Any]]
+    ) -> None:
         """调整间隔片段的目标时间戳以保证与字幕片段的连续性"""
         try:
             for i, segment in enumerate(segments):
@@ -1726,25 +1675,36 @@ class AudioAlignProcessor:
                             segment["target_start_time"] = round(gap_start, 8)
                             segment["target_end_time"] = round(gap_start, 8)
                             segment["target_duration"] = 0.0
-                            segment["speed_ratio"] = 0.0 if segment["original_duration"] > 0 else 1.0
+                            segment["speed_ratio"] = (
+                                0.0 if segment["original_duration"] > 0 else 1.0
+                            )
                     elif prev_subtitle:
                         # 只有前一个字幕片段（后缀片段）
                         segment["target_start_time"] = prev_subtitle["target_end_time"]
                         segment["target_end_time"] = round(
-                            prev_subtitle["target_end_time"] + segment["target_duration"], 8
+                            prev_subtitle["target_end_time"]
+                            + segment["target_duration"],
+                            8,
                         )
                     elif next_subtitle:
                         # 只有后一个字幕片段（前缀片段）
                         # 前缀片段应该从0开始，结束于第一个字幕开始前
-                        target_end_time = self._ensure_three_decimal_places(next_subtitle["target_start_time"])
-                        
+                        target_end_time = self._ensure_three_decimal_places(
+                            next_subtitle["target_start_time"]
+                        )
+
                         segment["target_start_time"] = 0.0
                         segment["target_end_time"] = target_end_time
                         segment["target_duration"] = target_end_time
                         # 重新计算变速比例
-                        if segment["original_duration"] > 0 and segment["target_duration"] > 0:
+                        if (
+                            segment["original_duration"] > 0
+                            and segment["target_duration"] > 0
+                        ):
                             segment["speed_ratio"] = round(
-                                segment["original_duration"] / segment["target_duration"], 8
+                                segment["original_duration"]
+                                / segment["target_duration"],
+                                8,
                             )
                         else:
                             segment["speed_ratio"] = 1.0
@@ -1756,10 +1716,8 @@ class AudioAlignProcessor:
         except Exception as e:
             self.logger.error(f"调整间隔片段时间戳失败: {str(e)}")
 
-
-
     def _apply_speed_to_segments(
-            self, segments: List[Dict[str, Any]]
+        self, segments: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
         对分割后的视频片段应用变速处理
@@ -1785,9 +1743,9 @@ class AudioAlignProcessor:
             for segment in segments:
                 try:
                     # 检查片段是否有文件路径
-                    if not segment.get(
-                            "segment_file_path"
-                    ) or not os.path.exists(segment["segment_file_path"]):
+                    if not segment.get("segment_file_path") or not os.path.exists(
+                        segment["segment_file_path"]
+                    ):
                         self.logger.warning(
                             f"片段 {segment['index']} 没有有效的文件路径，跳过变速处理"
                         )
@@ -1796,17 +1754,15 @@ class AudioAlignProcessor:
 
                     # 检查是否需要变速
                     speed_ratio = segment.get("speed_ratio", 1.0)
-                    
+
                     # 应用变速补偿系数，减少FFmpeg变速的精度损失
                     # 根据实际测试结果，FFmpeg变速通常会让视频变短，所以需要适当增加变速比例
                     if speed_ratio != 1.0:
                         compensation_factor = 0.99  # 1%的补偿系数
                         speed_ratio = speed_ratio * compensation_factor
                         self.logger.debug(f"应用补偿系数后变速比例: {speed_ratio:.6f}")
-                    
-                    if (
-                            abs(speed_ratio - 1.0) < 0.01
-                    ):  # 变速比例接近1.0，不需要变速
+
+                    if abs(speed_ratio - 1.0) < 0.01:  # 变速比例接近1.0，不需要变速
                         self.logger.debug(
                             f"片段 {segment['index']} 变速比例为 {speed_ratio:.3f}，不需要变速"
                         )
@@ -1816,9 +1772,7 @@ class AudioAlignProcessor:
 
                     # 生成变速后的文件路径
                     original_path = Path(segment["segment_file_path"])
-                    speed_filename = (
-                        f"{original_path.stem}_speed_{speed_ratio:.2f}{original_path.suffix}"
-                    )
+                    speed_filename = f"{original_path.stem}_speed_{speed_ratio:.2f}{original_path.suffix}"
                     speed_file_path = original_path.parent / speed_filename
 
                     # 构建ffmpeg变速命令
@@ -1835,17 +1789,21 @@ class AudioAlignProcessor:
                     if speed_ratio > 1.0:
                         # 加速：使用setpts滤镜，添加高精度处理
                         pts_ratio = 1.0 / speed_ratio
-                        cmd.extend([
-                            "-filter:v", 
-                            f"setpts={pts_ratio:.8f}*PTS"  # 提高精度到8位小数
-                        ])
+                        cmd.extend(
+                            [
+                                "-filter:v",
+                                f"setpts={pts_ratio:.8f}*PTS",  # 提高精度到8位小数
+                            ]
+                        )
                     else:
                         # 减速：使用高精度setpts
                         pts_ratio = 1.0 / speed_ratio
-                        cmd.extend([
-                            "-filter:v", 
-                            f"setpts={pts_ratio:.8f}*PTS"  # 提高精度到8位小数
-                        ])
+                        cmd.extend(
+                            [
+                                "-filter:v",
+                                f"setpts={pts_ratio:.8f}*PTS",  # 提高精度到8位小数
+                            ]
+                        )
 
                     # 添加GPU编码参数
                     if gpu_params:
@@ -1868,7 +1826,7 @@ class AudioAlignProcessor:
                         f"变速片段 {segment['index']}: 比例 {speed_ratio:.3f}"
                     )
                     result = subprocess.run(
-                        cmd, capture_output=True, text=True, encoding='utf-8'
+                        cmd, capture_output=True, text=True, encoding="utf-8"
                     )
 
                     if result.returncode == 0:
@@ -1886,7 +1844,9 @@ class AudioAlignProcessor:
                             )
 
                         # 计算实际视频时长（变速后的文件）
-                        actual_duration = self._get_actual_video_duration(str(speed_file_path))
+                        actual_duration = self._get_actual_video_duration(
+                            str(speed_file_path)
+                        )
                         updated_segment["actual_duration"] = round(actual_duration, 8)
 
                         processed_segments.append(updated_segment)
@@ -1896,9 +1856,6 @@ class AudioAlignProcessor:
                             f"片段 {segment['index']} 变速成功: {speed_file_path}, 实际时长: {actual_duration:.6f}s"
                         )
 
-                        # 可选：删除原始分割文件以节省空间
-                        # os.remove(original_path)
-
                     else:
                         self.logger.error(
                             f"片段 {segment['index']} 变速失败: {result.stderr}"
@@ -1906,9 +1863,7 @@ class AudioAlignProcessor:
                         # 变速失败，保留原始信息但标记错误
                         updated_segment = segment.copy()
                         updated_segment["speed_processing_success"] = False
-                        updated_segment["speed_processing_error"] = (
-                            result.stderr
-                        )
+                        updated_segment["speed_processing_error"] = result.stderr
                         processed_segments.append(updated_segment)
 
                 except Exception as e:
@@ -1932,7 +1887,7 @@ class AudioAlignProcessor:
             return segments  # 返回原始片段列表
 
     def _concatenate_speed_adjusted_segments(
-            self, segments: List[Dict[str, Any]], original_video_path: str
+        self, segments: List[Dict[str, Any]], original_video_path: str
     ) -> Dict[str, Any]:
         """
         拼接变速处理后的视频片段
@@ -1957,19 +1912,20 @@ class AudioAlignProcessor:
             output_dir = main_output_dir / "adjusted_video"
             output_dir.mkdir(parents=True, exist_ok=True)
             final_video_path = (
-                    output_dir / f"final_speed_adjusted_{video_file.stem}{video_file.suffix}"
+                output_dir
+                / f"final_speed_adjusted_{video_file.stem}{video_file.suffix}"
             )
 
             # 收集有效的视频片段文件
             valid_segments = []
-            theoretical_duration = Decimal('0')  # 使用高精度计算
+            theoretical_duration = Decimal("0")  # 使用高精度计算
 
             for segment in segments:
                 # 优先使用变速后的文件，否则使用原始分割文件
                 video_file_path = None
-                if segment.get(
-                        "speed_processing_success", False
-                ) and segment.get("speed_processed_file_path"):
+                if segment.get("speed_processing_success", False) and segment.get(
+                    "speed_processed_file_path"
+                ):
                     video_file_path = segment["speed_processed_file_path"]
                 elif segment.get("segment_file_path"):
                     video_file_path = segment["segment_file_path"]
@@ -1983,7 +1939,7 @@ class AudioAlignProcessor:
                             segment.get("duration", 0),
                         ),
                     )
-                    
+
                     valid_segments.append(
                         {
                             "index": segment["index"],
@@ -1994,7 +1950,7 @@ class AudioAlignProcessor:
                             ),
                         }
                     )
-                    
+
                     # 使用高精度累加
                     theoretical_duration += Decimal(str(segment_duration))
                 else:
@@ -2026,9 +1982,7 @@ class AudioAlignProcessor:
                     )  # 仅使用hwaccel参数
 
                 # 拼接参数
-                cmd.extend(
-                    ["-f", "concat", "-safe", "0", "-i", str(list_file_path)]
-                )
+                cmd.extend(["-f", "concat", "-safe", "0", "-i", str(list_file_path)])
 
                 # 添加GPU编码参数
                 if gpu_params:
@@ -2039,28 +1993,42 @@ class AudioAlignProcessor:
                 # 输出参数 - 添加更精确的时间戳处理
                 cmd.extend(
                     [
-                        "-avoid_negative_ts", "make_zero",
-                        "-fflags", "+genpts",  # 生成精确的PTS
-                        "-vsync", "cfr",       # 恒定帧率
-                        "-r", "30",            # 确保帧率一致性
-                        "-an",                 # 移除音频
+                        "-avoid_negative_ts",
+                        "make_zero",
+                        "-fflags",
+                        "+genpts",  # 生成精确的PTS
+                        "-vsync",
+                        "cfr",  # 恒定帧率
+                        "-r",
+                        "30",  # 确保帧率一致性
+                        "-an",  # 移除音频
                         str(final_video_path),
                     ]
                 )
 
                 # 执行拼接
                 self.logger.debug(f"拼接命令: {' '.join(cmd)}")
-                result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, encoding="utf-8"
+                )
 
                 if result.returncode == 0:
                     # 拼接成功 - 获取实际视频时长
-                    actual_video_duration = self._get_actual_video_duration(str(final_video_path))
+                    actual_video_duration = self._get_actual_video_duration(
+                        str(final_video_path)
+                    )
                     theoretical_duration_float = float(theoretical_duration)
-                    
+
                     # 计算时长差异
-                    duration_difference = abs(actual_video_duration - theoretical_duration_float)
-                    duration_accuracy = (1 - duration_difference / theoretical_duration_float) * 100 if theoretical_duration_float > 0 else 0
-                    
+                    duration_difference = abs(
+                        actual_video_duration - theoretical_duration_float
+                    )
+                    duration_accuracy = (
+                        (1 - duration_difference / theoretical_duration_float) * 100
+                        if theoretical_duration_float > 0
+                        else 0
+                    )
+
                     # 文件大小
                     file_size = (
                         final_video_path.stat().st_size
@@ -2074,20 +2042,24 @@ class AudioAlignProcessor:
                         "actual_duration": round(actual_video_duration, 8),
                         "duration_difference": round(duration_difference, 8),
                         "accuracy_percentage": round(duration_accuracy, 8),
-                        "precision_level": "high" if duration_difference < 0.1 else "medium" if duration_difference < 1.0 else "low"
+                        "precision_level": (
+                            "high"
+                            if duration_difference < 0.1
+                            else "medium" if duration_difference < 1.0 else "low"
+                        ),
                     }
 
                     concat_result = {
                         "success": True,
                         "output_path": str(final_video_path),
-                        "total_duration": round(actual_video_duration, 8),  # 使用实际时长
+                        "total_duration": round(
+                            actual_video_duration, 8
+                        ),  # 使用实际时长
                         "theoretical_duration": round(theoretical_duration_float, 8),
                         "file_size": file_size,
                         "segments_count": len(valid_segments),
                         "speed_processed_count": sum(
-                            1
-                            for seg in valid_segments
-                            if seg["is_speed_processed"]
+                            1 for seg in valid_segments if seg["is_speed_processed"]
                         ),
                         "duration_analysis": duration_analysis,
                         "concatenation_info": {
@@ -2106,7 +2078,7 @@ class AudioAlignProcessor:
                         f"时长分析: 理论 {theoretical_duration_float:.3f}s, 实际 {actual_video_duration:.3f}s, "
                         f"差异 {duration_difference:.3f}s ({duration_accuracy:.1f}% 精度)"
                     )
-                    
+
                     # 如果时长差异较大，记录警告
                     if duration_difference > 1.0:
                         self.logger.warning(
@@ -2126,7 +2098,7 @@ class AudioAlignProcessor:
             return {"success": False, "error": str(e)}
 
     def _split_video_segments(
-            self, silent_video_path: str, segments: List[Dict[str, Any]]
+        self, silent_video_path: str, segments: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
         根据片段信息实际分割视频文件
@@ -2195,29 +2167,25 @@ class AudioAlignProcessor:
                     )
 
                     # 执行分割
-                    self.logger.debug(
-                        f"分割片段 {segment['index']}: {' '.join(cmd)}"
-                    )
+                    self.logger.debug(f"分割片段 {segment['index']}: {' '.join(cmd)}")
                     result = subprocess.run(
-                        cmd, capture_output=True, text=True, encoding='utf-8'
+                        cmd, capture_output=True, text=True, encoding="utf-8"
                     )
 
                     if result.returncode == 0:
                         # 分割成功，更新片段信息
                         updated_segment = segment.copy()
-                        updated_segment["segment_file_path"] = str(
-                            segment_path
-                        )
+                        updated_segment["segment_file_path"] = str(segment_path)
                         updated_segment["file_size"] = (
-                            segment_path.stat().st_size
-                            if segment_path.exists()
-                            else 0
+                            segment_path.stat().st_size if segment_path.exists() else 0
                         )
-                        
+
                         # 计算分割后视频片段的实际时长
-                        actual_duration = self._get_actual_video_duration(str(segment_path))
+                        actual_duration = self._get_actual_video_duration(
+                            str(segment_path)
+                        )
                         updated_segment["actual_duration"] = round(actual_duration, 8)
-                        
+
                         updated_segments.append(updated_segment)
                         success_count += 1
 
@@ -2313,12 +2281,15 @@ class AudioAlignProcessor:
         try:
             # 检查nvidia-smi命令
             result = subprocess.run(
-                ["nvidia-smi"], capture_output=True, text=True, encoding='utf-8'
+                ["nvidia-smi"], capture_output=True, text=True, encoding="utf-8"
             )
             if result.returncode == 0:
                 # 检查ffmpeg是否支持CUDA
                 result = subprocess.run(
-                    ["ffmpeg", "-hwaccels"], capture_output=True, text=True, encoding='utf-8'
+                    ["ffmpeg", "-hwaccels"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
                 )
                 return "cuda" in result.stdout.lower()
             return False
@@ -2348,19 +2319,19 @@ class AudioAlignProcessor:
             return False
 
     def _build_segments_from_subtitles(
-            self,
-            subtitles: List[SubtitleEntry],
-            video_duration: float,
-            segment_source: str = "original"
+        self,
+        subtitles: List[SubtitleEntry],
+        video_duration: float,
+        segment_source: str = "original",
     ) -> List[Dict[str, Any]]:
         """
         根据字幕构建视频片段，即使间隔为0也要添加标记
-        
+
         Args:
             subtitles: 字幕条目列表
             video_duration: 视频总时长
             segment_source: 片段来源标识
-            
+
         Returns:
             List[Dict[str, Any]]: 片段列表，包含间隔片段和字幕片段
         """
@@ -2368,15 +2339,15 @@ class AudioAlignProcessor:
             segments = []
             segment_index = 0
             current_time = 0.0
-            
+
             for i, subtitle in enumerate(subtitles):
                 subtitle_start = subtitle.start_time_seconds()
                 subtitle_end = subtitle.end_time_seconds()
-                
+
                 # 添加间隔片段（即使时长为0）
                 gap_duration = subtitle_start - current_time
                 gap_type = "prefix" if i == 0 else "gap"
-                
+
                 gap_segment = {
                     "index": segment_index,
                     "start_time": round(current_time, 8),
@@ -2390,7 +2361,7 @@ class AudioAlignProcessor:
                 }
                 segments.append(gap_segment)
                 segment_index += 1
-                
+
                 # 添加字幕片段
                 subtitle_duration = subtitle_end - subtitle_start
                 subtitle_segment = {
@@ -2407,7 +2378,7 @@ class AudioAlignProcessor:
                 segments.append(subtitle_segment)
                 segment_index += 1
                 current_time = subtitle_end
-                
+
             # 添加最后一个间隔片段（从最后字幕结束到视频结束）
             if current_time < video_duration:
                 final_gap_duration = video_duration - current_time
@@ -2437,231 +2408,202 @@ class AudioAlignProcessor:
                     "original_duration": 0.0,
                 }
                 segments.append(final_gap_segment)
-                
+
             return segments
-            
+
         except Exception as e:
             self.logger.error(f"构建片段失败: {str(e)}")
             return []
 
     def _merge_segments_by_index(
-            self,
-            original_segments: List[Dict[str, Any]],
-            new_segments: List[Dict[str, Any]]
+        self,
+        original_segments: List[Dict[str, Any]],
+        new_segments: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
         根据索引合并原字幕和新字幕的片段结果
-        
+
         Args:
             original_segments: 原字幕构建的片段列表
             new_segments: 新字幕构建的片段列表
-            
+
         Returns:
             List[Dict[str, Any]]: 合并后的片段列表
         """
         try:
             merged_segments = []
-            
+
             # 确保两个列表长度相同（应该是相同的，因为结构一致）
             max_length = max(len(original_segments), len(new_segments))
-            
+
             for i in range(max_length):
                 # 获取对应索引的片段
-                original_segment = original_segments[i] if i < len(original_segments) else None
+                original_segment = (
+                    original_segments[i] if i < len(original_segments) else None
+                )
                 new_segment = new_segments[i] if i < len(new_segments) else None
-                
+
                 if original_segment is None and new_segment is None:
                     continue
-                    
+
                 # 以原字幕片段为基础进行合并
                 if original_segment is not None:
                     merged_segment = original_segment.copy()
-                    
+
                     # 如果有对应的新字幕片段，添加新字幕的信息
                     if new_segment is not None:
-                        if merged_segment["segment_type"] == "subtitle" and new_segment["segment_type"] == "subtitle":
+                        if (
+                            merged_segment["segment_type"] == "subtitle"
+                            and new_segment["segment_type"] == "subtitle"
+                        ):
                             # 字幕片段：添加新字幕的时间信息
-                            merged_segment.update({
-                                "new_start_time": new_segment["start_time"],
-                                "new_end_time": new_segment["end_time"],
-                                "new_duration": new_segment["duration"],
-                                "new_text": new_segment["text"],
-                                "new_subtitle_index": new_segment["subtitle_index"],
-                            })
-                        elif merged_segment["segment_type"] in ["gap", "prefix", "suffix"] and new_segment["segment_type"] in ["gap", "prefix", "suffix"]:
+                            merged_segment.update(
+                                {
+                                    "new_start_time": new_segment["start_time"],
+                                    "new_end_time": new_segment["end_time"],
+                                    "new_duration": new_segment["duration"],
+                                    "new_text": new_segment["text"],
+                                    "new_subtitle_index": new_segment["subtitle_index"],
+                                }
+                            )
+                        elif merged_segment["segment_type"] in [
+                            "gap",
+                            "prefix",
+                            "suffix",
+                        ] and new_segment["segment_type"] in [
+                            "gap",
+                            "prefix",
+                            "suffix",
+                        ]:
                             # 间隔片段：添加新时间信息
-                            merged_segment.update({
-                                "new_start_time": new_segment["start_time"],
-                                "new_end_time": new_segment["end_time"],
-                                "new_duration": new_segment["duration"],
-                            })
+                            merged_segment.update(
+                                {
+                                    "new_start_time": new_segment["start_time"],
+                                    "new_end_time": new_segment["end_time"],
+                                    "new_duration": new_segment["duration"],
+                                }
+                            )
                     else:
                         # 没有对应的新字幕片段，使用原片段信息
-                        merged_segment.update({
-                            "new_start_time": original_segment["start_time"],
-                            "new_end_time": original_segment["end_time"],
-                            "new_duration": original_segment["duration"],
-                        })
+                        merged_segment.update(
+                            {
+                                "new_start_time": original_segment["start_time"],
+                                "new_end_time": original_segment["end_time"],
+                                "new_duration": original_segment["duration"],
+                            }
+                        )
                         if original_segment["segment_type"] == "subtitle":
-                            merged_segment.update({
-                                "new_text": original_segment["text"],
-                                "new_subtitle_index": original_segment["subtitle_index"],
-                            })
-                            
+                            merged_segment.update(
+                                {
+                                    "new_text": original_segment["text"],
+                                    "new_subtitle_index": original_segment[
+                                        "subtitle_index"
+                                    ],
+                                }
+                            )
+
                 elif new_segment is not None:
                     # 只有新字幕片段，创建新的合并片段
                     merged_segment = new_segment.copy()
-                    merged_segment.update({
-                        "new_start_time": new_segment["start_time"],
-                        "new_end_time": new_segment["end_time"],
-                        "new_duration": new_segment["duration"],
-                    })
+                    merged_segment.update(
+                        {
+                            "new_start_time": new_segment["start_time"],
+                            "new_end_time": new_segment["end_time"],
+                            "new_duration": new_segment["duration"],
+                        }
+                    )
                     if new_segment["segment_type"] == "subtitle":
-                        merged_segment.update({
-                            "new_text": new_segment["text"],
-                            "new_subtitle_index": new_segment["subtitle_index"],
-                        })
+                        merged_segment.update(
+                            {
+                                "new_text": new_segment["text"],
+                                "new_subtitle_index": new_segment["subtitle_index"],
+                            }
+                        )
                     # 为原始信息设置默认值
                     merged_segment["source"] = "new_only"
-                    
+
                 # 重新设置连续的索引
                 merged_segment["index"] = len(merged_segments)
                 merged_segments.append(merged_segment)
-                
-            self.logger.info(f"索引合并完成：原始片段 {len(original_segments)}，新片段 {len(new_segments)}，合并后 {len(merged_segments)}")
+
+            self.logger.info(
+                f"索引合并完成：原始片段 {len(original_segments)}，新片段 {len(new_segments)}，合并后 {len(merged_segments)}"
+            )
             return merged_segments
-            
+
         except Exception as e:
             self.logger.error(f"索引合并片段失败: {str(e)}")
             return original_segments  # 失败时返回原始片段
 
     def _merge_short_segments_upward(
-            self,
-            segments: List[Dict[str, Any]],
-            min_duration: float = 0.3
+        self, segments: List[Dict[str, Any]], min_duration: float = 0.3
     ) -> List[Dict[str, Any]]:
         """
         对小于指定时长的片段进行向上合并（合并到前一个片段）
-        
+
         Args:
             segments: 片段列表
             min_duration: 最小时长阈值（秒）
-            
+
         Returns:
             List[Dict[str, Any]]: 合并后的片段列表
         """
         try:
             if not segments:
                 return segments
-                
+
             self.logger.info(f"开始向上合并小于 {min_duration}s 的短片段")
-            
+
             merged_segments = []
             i = 0
-            
+
             while i < len(segments):
                 current_segment = segments[i].copy()
-                
+
                 # 检查当前片段是否太短（检查原始时长和新时长）
                 original_duration = current_segment.get("duration", 8)
                 new_duration = current_segment.get("new_duration", 8)
-                
-                is_short = (original_duration < min_duration) or (new_duration < min_duration)
-                
+
+                is_short = (original_duration < min_duration) or (
+                    new_duration < min_duration
+                )
+
                 if is_short and merged_segments:
                     # 短片段合并到前一个片段
                     prev_segment = merged_segments[-1]
-                    
+
                     self.logger.debug(
                         f"向上合并短片段 {current_segment['index']} (原始:{original_duration:.3f}s, 新:{new_duration:.3f}s) "
                         f"到片段 {prev_segment['index']}"
                     )
-                    
+
                     # 合并原始时间信息
-                    new_start_time = min(prev_segment["start_time"], current_segment["start_time"])
-                    new_end_time = max(prev_segment["end_time"], current_segment["end_time"])
+                    new_start_time = min(
+                        prev_segment["start_time"], current_segment["start_time"]
+                    )
+                    new_end_time = max(
+                        prev_segment["end_time"], current_segment["end_time"]
+                    )
                     new_total_duration = new_end_time - new_start_time
-                    
+
                     # 合并新时间信息
                     new_new_start_time = min(
                         prev_segment.get("new_start_time", prev_segment["start_time"]),
-                        current_segment.get("new_start_time", current_segment["start_time"])
+                        current_segment.get(
+                            "new_start_time", current_segment["start_time"]
+                        ),
                     )
                     new_new_end_time = max(
                         prev_segment.get("new_end_time", prev_segment["end_time"]),
-                        current_segment.get("new_end_time", current_segment["end_time"])
+                        current_segment.get(
+                            "new_end_time", current_segment["end_time"]
+                        ),
                     )
                     new_new_total_duration = new_new_end_time - new_new_start_time
-                    
+
                     # 更新前一个片段
-                    prev_segment.update({
-                        "start_time": round(new_start_time, 8),
-                        "end_time": round(new_end_time, 8),
-                        "duration": round(new_total_duration, 8),
-                        "original_duration": round(new_total_duration, 8),
-                        "new_start_time": round(new_new_start_time, 8),
-                        "new_end_time": round(new_new_end_time, 8),
-                        "new_duration": round(new_new_total_duration, 8),
-                    })
-                    
-                    # 合并文本信息
-                    if current_segment.get("text") and prev_segment.get("text"):
-                        if (prev_segment["segment_type"] == "subtitle" and 
-                            current_segment["segment_type"] == "subtitle"):
-                            # 两个都是字幕片段，合并文本
-                            prev_segment["text"] = f"{prev_segment['text']} {current_segment['text']}"
-                            if (prev_segment.get("new_text") and current_segment.get("new_text")):
-                                prev_segment["new_text"] = f"{prev_segment['new_text']} {current_segment['new_text']}"
-                        else:
-                            # 更新描述文本
-                            prev_segment["text"] = f"合并片段 {new_start_time:.3f}s - {new_end_time:.3f}s"
-                    
-                    # 标记片段类型
-                    if prev_segment["segment_type"] != current_segment["segment_type"]:
-                        if (prev_segment["segment_type"] == "subtitle" or 
-                            current_segment["segment_type"] == "subtitle"):
-                            prev_segment["segment_type"] = "subtitle"  # 优先保持字幕类型
-                        else:
-                            prev_segment["segment_type"] = "merged"
-                    
-                    # 记录合并信息
-                    prev_segment["merged_from"] = prev_segment.get("merged_from", []) + [current_segment["index"]]
-                    
-                    # 更新已合并片段
-                    merged_segments[-1] = prev_segment
-                    
-                elif is_short and not merged_segments:
-                    # 第一个片段且很短，检查是否可以向下合并到第二个片段
-                    if i + 1 < len(segments):
-                        next_segment = segments[i + 1]
-                        
-                        self.logger.debug(
-                            f"第一个片段 {current_segment['index']} 时长过短 (原始:{original_duration:.3f}s, 新:{new_duration:.3f}s)，"
-                            f"尝试向下合并到片段 {next_segment['index']}"
-                        )
-                        
-                        # 合并当前片段到下一个片段
-                        merged_first_segment = next_segment.copy()
-                        
-                        # 合并原始时间信息
-                        new_start_time = min(current_segment["start_time"], next_segment["start_time"])
-                        new_end_time = max(current_segment["end_time"], next_segment["end_time"])
-                        new_total_duration = new_end_time - new_start_time
-                        
-                        # 合并新时间信息
-                        new_new_start_time = min(
-                            current_segment.get("new_start_time", current_segment["start_time"]),
-                            next_segment.get("new_start_time", next_segment["start_time"])
-                        )
-                        new_new_end_time = max(
-                            current_segment.get("new_end_time", current_segment["end_time"]),
-                            next_segment.get("new_end_time", next_segment["end_time"])
-                        )
-                        new_new_total_duration = new_new_end_time - new_new_start_time
-                        
-                        # 更新合并后的片段
-                        merged_first_segment.update({
-                            "index": 0,  # 保持为第一个片段
+                    prev_segment.update(
+                        {
                             "start_time": round(new_start_time, 8),
                             "end_time": round(new_end_time, 8),
                             "duration": round(new_total_duration, 8),
@@ -2669,36 +2611,152 @@ class AudioAlignProcessor:
                             "new_start_time": round(new_new_start_time, 8),
                             "new_end_time": round(new_new_end_time, 8),
                             "new_duration": round(new_new_total_duration, 8),
-                        })
-                        
+                        }
+                    )
+
+                    # 合并文本信息
+                    if current_segment.get("text") and prev_segment.get("text"):
+                        if (
+                            prev_segment["segment_type"] == "subtitle"
+                            and current_segment["segment_type"] == "subtitle"
+                        ):
+                            # 两个都是字幕片段，合并文本
+                            prev_segment["text"] = (
+                                f"{prev_segment['text']} {current_segment['text']}"
+                            )
+                            if prev_segment.get("new_text") and current_segment.get(
+                                "new_text"
+                            ):
+                                prev_segment["new_text"] = (
+                                    f"{prev_segment['new_text']} {current_segment['new_text']}"
+                                )
+                        else:
+                            # 更新描述文本
+                            prev_segment["text"] = (
+                                f"合并片段 {new_start_time:.3f}s - {new_end_time:.3f}s"
+                            )
+
+                    # 标记片段类型
+                    if prev_segment["segment_type"] != current_segment["segment_type"]:
+                        if (
+                            prev_segment["segment_type"] == "subtitle"
+                            or current_segment["segment_type"] == "subtitle"
+                        ):
+                            prev_segment["segment_type"] = (
+                                "subtitle"  # 优先保持字幕类型
+                            )
+                        else:
+                            prev_segment["segment_type"] = "merged"
+
+                    # 记录合并信息
+                    prev_segment["merged_from"] = prev_segment.get(
+                        "merged_from", []
+                    ) + [current_segment["index"]]
+
+                    # 更新已合并片段
+                    merged_segments[-1] = prev_segment
+
+                elif is_short and not merged_segments:
+                    # 第一个片段且很短，检查是否可以向下合并到第二个片段
+                    if i + 1 < len(segments):
+                        next_segment = segments[i + 1]
+
+                        self.logger.debug(
+                            f"第一个片段 {current_segment['index']} 时长过短 (原始:{original_duration:.3f}s, 新:{new_duration:.3f}s)，"
+                            f"尝试向下合并到片段 {next_segment['index']}"
+                        )
+
+                        # 合并当前片段到下一个片段
+                        merged_first_segment = next_segment.copy()
+
+                        # 合并原始时间信息
+                        new_start_time = min(
+                            current_segment["start_time"], next_segment["start_time"]
+                        )
+                        new_end_time = max(
+                            current_segment["end_time"], next_segment["end_time"]
+                        )
+                        new_total_duration = new_end_time - new_start_time
+
+                        # 合并新时间信息
+                        new_new_start_time = min(
+                            current_segment.get(
+                                "new_start_time", current_segment["start_time"]
+                            ),
+                            next_segment.get(
+                                "new_start_time", next_segment["start_time"]
+                            ),
+                        )
+                        new_new_end_time = max(
+                            current_segment.get(
+                                "new_end_time", current_segment["end_time"]
+                            ),
+                            next_segment.get("new_end_time", next_segment["end_time"]),
+                        )
+                        new_new_total_duration = new_new_end_time - new_new_start_time
+
+                        # 更新合并后的片段
+                        merged_first_segment.update(
+                            {
+                                "index": 0,  # 保持为第一个片段
+                                "start_time": round(new_start_time, 8),
+                                "end_time": round(new_end_time, 8),
+                                "duration": round(new_total_duration, 8),
+                                "original_duration": round(new_total_duration, 8),
+                                "new_start_time": round(new_new_start_time, 8),
+                                "new_end_time": round(new_new_end_time, 8),
+                                "new_duration": round(new_new_total_duration, 8),
+                            }
+                        )
+
                         # 合并文本信息
                         if current_segment.get("text") and next_segment.get("text"):
-                            if (current_segment["segment_type"] == "subtitle" and 
-                                next_segment["segment_type"] == "subtitle"):
+                            if (
+                                current_segment["segment_type"] == "subtitle"
+                                and next_segment["segment_type"] == "subtitle"
+                            ):
                                 # 两个都是字幕片段，合并文本
-                                merged_first_segment["text"] = f"{current_segment['text']} {next_segment['text']}"
-                                if (current_segment.get("new_text") and next_segment.get("new_text")):
-                                    merged_first_segment["new_text"] = f"{current_segment['new_text']} {next_segment['new_text']}"
+                                merged_first_segment["text"] = (
+                                    f"{current_segment['text']} {next_segment['text']}"
+                                )
+                                if current_segment.get("new_text") and next_segment.get(
+                                    "new_text"
+                                ):
+                                    merged_first_segment["new_text"] = (
+                                        f"{current_segment['new_text']} {next_segment['new_text']}"
+                                    )
                             else:
                                 # 更新描述文本
-                                merged_first_segment["text"] = f"合并片段 {new_start_time:.3f}s - {new_end_time:.3f}s"
-                        
+                                merged_first_segment["text"] = (
+                                    f"合并片段 {new_start_time:.3f}s - {new_end_time:.3f}s"
+                                )
+
                         # 标记片段类型
-                        if current_segment["segment_type"] != next_segment["segment_type"]:
-                            if (current_segment["segment_type"] == "subtitle" or 
-                                next_segment["segment_type"] == "subtitle"):
-                                merged_first_segment["segment_type"] = "subtitle"  # 优先保持字幕类型
+                        if (
+                            current_segment["segment_type"]
+                            != next_segment["segment_type"]
+                        ):
+                            if (
+                                current_segment["segment_type"] == "subtitle"
+                                or next_segment["segment_type"] == "subtitle"
+                            ):
+                                merged_first_segment["segment_type"] = (
+                                    "subtitle"  # 优先保持字幕类型
+                                )
                             else:
                                 merged_first_segment["segment_type"] = "merged"
-                        
+
                         # 记录合并信息
-                        merged_first_segment["merged_from"] = [current_segment["index"], next_segment["index"]]
-                        
+                        merged_first_segment["merged_from"] = [
+                            current_segment["index"],
+                            next_segment["index"],
+                        ]
+
                         merged_segments.append(merged_first_segment)
-                        
+
                         # 跳过下一个片段，因为已经合并了
                         i += 1
-                        
+
                         self.logger.info(
                             f"第一个短片段 {current_segment['index']} 已向下合并到片段 {next_segment['index']}"
                         )
@@ -2711,102 +2769,112 @@ class AudioAlignProcessor:
                 else:
                     # 片段时长足够或无需合并，直接添加
                     merged_segments.append(current_segment)
-                
+
                 i += 1
-            
+
             # 重新分配连续的索引
             for idx, segment in enumerate(merged_segments):
                 segment["index"] = idx
-                
+
             original_count = len(segments)
             merged_count = len(merged_segments)
             self.logger.info(f"向上合并完成: {original_count} -> {merged_count} 个片段")
-            
+
             return merged_segments
-            
+
         except Exception as e:
             self.logger.error(f"向上合并短片段失败: {str(e)}")
             return segments  # 失败时返回原始片段列表
 
     def _calculate_final_speed_ratios(
-            self,
-            segments: List[Dict[str, Any]]
+        self, segments: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
         为所有片段计算最终的变速比例（使用高精度计算）
-        
+
         Args:
             segments: 合并后的片段列表
-            
+
         Returns:
             List[Dict[str, Any]]: 包含变速比例的片段列表
         """
         try:
             if not segments:
                 return segments
-                
+
             self.logger.info("开始计算最终变速比例（高精度模式）")
-            
+
             speed_adjusted_segments = []
-            current_target_time = Decimal('0')  # 使用高精度累积时间戳
-            
+            current_target_time = Decimal("0")  # 使用高精度累积时间戳
+
             for segment in segments:
                 adjusted_segment = segment.copy()
-                
+
                 # 获取原始时长和新时长，使用Decimal进行高精度计算
-                original_duration = Decimal(str(segment.get("original_duration", segment.get("duration", 0))))
-                new_duration = Decimal(str(segment.get("new_duration", segment.get("duration", 0))))
-                
+                original_duration = Decimal(
+                    str(segment.get("original_duration", segment.get("duration", 0)))
+                )
+                new_duration = Decimal(
+                    str(segment.get("new_duration", segment.get("duration", 0)))
+                )
+
                 # 计算变速比例
                 if new_duration > 0:
                     speed_ratio = original_duration / new_duration
                 else:
-                    speed_ratio = Decimal('1.0') if original_duration > 0 else Decimal('0.0')
-                
+                    speed_ratio = (
+                        Decimal("1.0") if original_duration > 0 else Decimal("0.0")
+                    )
+
                 # 设置目标时间戳（连续的时间轴）
                 target_start_time = current_target_time
                 target_end_time = current_target_time + new_duration
                 current_target_time = target_end_time
-                
+
                 # 转换为float并保持适当精度
                 target_start_float = float(target_start_time)
                 target_end_float = float(target_end_time)
                 new_duration_float = float(new_duration)
                 speed_ratio_float = float(speed_ratio)
-                
+
                 # 更新片段信息（使用8位小数精度以减少累积误差）
-                adjusted_segment.update({
-                    "target_start_time": round(target_start_float, 8),
-                    "target_end_time": round(target_end_float, 8),
-                    "target_duration": round(new_duration_float, 8),
-                    "speed_ratio": round(speed_ratio_float, 8),
-                })
-                
+                adjusted_segment.update(
+                    {
+                        "target_start_time": round(target_start_float, 8),
+                        "target_end_time": round(target_end_float, 8),
+                        "target_duration": round(new_duration_float, 8),
+                        "speed_ratio": round(speed_ratio_float, 8),
+                    }
+                )
+
                 # 为字幕片段添加额外信息
                 if segment["segment_type"] == "subtitle":
                     if segment.get("new_text"):
                         adjusted_segment["new_subtitle_text"] = segment["new_text"]
                     if segment.get("new_subtitle_index") is not None:
-                        adjusted_segment["target_subtitle_index"] = segment["new_subtitle_index"]
-                
+                        adjusted_segment["target_subtitle_index"] = segment[
+                            "new_subtitle_index"
+                        ]
+
                 speed_adjusted_segments.append(adjusted_segment)
-                
+
                 self.logger.debug(
                     f"片段 {segment['index']} ({segment['segment_type']}): "
                     f"原始时长 {float(original_duration):.6f}s -> 目标时长 {new_duration_float:.6f}s, "
                     f"变速比例 {speed_ratio_float:.6f}"
                 )
-            
+
             final_duration = float(current_target_time)
-            self.logger.info(f"变速比例计算完成，共处理 {len(speed_adjusted_segments)} 个片段")
+            self.logger.info(
+                f"变速比例计算完成，共处理 {len(speed_adjusted_segments)} 个片段"
+            )
             self.logger.info(f"最终视频目标时长: {final_duration:.6f}s")
-            
+
             return speed_adjusted_segments
-            
+
         except Exception as e:
             self.logger.error(f"计算变速比例失败: {str(e)}")
             return segments  # 失败时返回原始片段列表
-
 
 
 # 单例实例
@@ -2821,7 +2889,7 @@ def get_align_processor() -> AudioAlignProcessor:
 
 
 def align_audio_with_subtitles(
-        tts_results_path: str, srt_path: str, output_path: Optional[str] = None
+    tts_results_path: str, srt_path: str, output_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     根据TTS结果和SRT字幕生成对齐的音频文件
@@ -2851,9 +2919,9 @@ def align_audio_with_subtitles(
 
 
 def generate_aligned_srt(
-        aligned_results_path: str,
-        original_srt_path: str,
-        output_srt_path: Optional[str] = None,
+    aligned_results_path: str,
+    original_srt_path: str,
+    output_srt_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     根据对齐结果生成新的SRT字幕文件
@@ -2883,7 +2951,7 @@ def generate_aligned_srt(
 
 
 def process_video_speed_adjustment(
-        silent_video_path: str, original_srt_path: str, new_srt_path: str
+    silent_video_path: str, original_srt_path: str, new_srt_path: str
 ) -> Dict[str, Any]:
     """
     处理视频变速调整：根据原字幕和新字幕进行视频分割、变速处理和拼接

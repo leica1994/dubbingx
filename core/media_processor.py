@@ -39,7 +39,7 @@ class MediaProcessor:
             self.logger.info("使用CPU处理")
 
     def separate_media(
-            self, video_path: str, output_dir: Optional[str] = None
+        self, video_path: str, output_dir: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         根据视频路径分离人声、无声视频和背景音乐
@@ -132,30 +132,28 @@ class MediaProcessor:
         try:
             # 根据输出格式选择合适的编码器
             output_ext = Path(silent_video_path).suffix.lower()
-            
+
             # 设置编码参数
-            output_params = {
-                'preset': 'fast'
-            }
-            
+            output_params = {"preset": "fast"}
+
             # 根据不同格式选择编码器和参数
-            if output_ext in ['.mp4', '.m4v']:
-                output_params['vcodec'] = 'libx264'
-            elif output_ext in ['.avi']:
-                output_params['vcodec'] = 'libx264'
-            elif output_ext in ['.mov']:
-                output_params['vcodec'] = 'libx264'
-            elif output_ext in ['.mkv']:
-                output_params['vcodec'] = 'libx264'
-            elif output_ext in ['.ts']:
-                output_params['vcodec'] = 'libx264'
-            elif output_ext in ['.webm']:
-                output_params['vcodec'] = 'libvpx-vp9'
-                output_params.pop('preset')  # VP9 不支持preset参数
+            if output_ext in [".mp4", ".m4v"]:
+                output_params["vcodec"] = "libx264"
+            elif output_ext in [".avi"]:
+                output_params["vcodec"] = "libx264"
+            elif output_ext in [".mov"]:
+                output_params["vcodec"] = "libx264"
+            elif output_ext in [".mkv"]:
+                output_params["vcodec"] = "libx264"
+            elif output_ext in [".ts"]:
+                output_params["vcodec"] = "libx264"
+            elif output_ext in [".webm"]:
+                output_params["vcodec"] = "libvpx-vp9"
+                output_params.pop("preset")  # VP9 不支持preset参数
             else:
                 # 默认使用 libx264
-                output_params['vcodec'] = 'libx264'
-            
+                output_params["vcodec"] = "libx264"
+
             (
                 ffmpeg.input(video_path)
                 .video.output(silent_video_path, **output_params)
@@ -166,9 +164,7 @@ class MediaProcessor:
         except Exception as e:
             raise Exception(f"无声视频创建失败: {str(e)}")
 
-    def _separate_audio(
-            self, audio_path: str, vocal_path: str, background_path: str
-    ):
+    def _separate_audio(self, audio_path: str, vocal_path: str, background_path: str):
         """使用Demucs分离人声和背景音乐"""
         try:
             # 加载模型
@@ -220,11 +216,11 @@ class MediaProcessor:
                 torch.cuda.empty_cache()
 
     def generate_reference_audio(
-            self,
-            audio_path: str,
-            subtitle_path: str,
-            output_dir: Optional[str] = None,
-            normalize_volume: bool = True,
+        self,
+        audio_path: str,
+        subtitle_path: str,
+        output_dir: Optional[str] = None,
+        normalize_volume: bool = True,
     ) -> Dict[str, Any]:
         """
         根据字幕分隔音频生成参考音频
@@ -317,9 +313,7 @@ class MediaProcessor:
                     )
 
                     # 静音检测
-                    is_silence = self._is_silence_segment(
-                        segment_audio
-                    )
+                    is_silence = self._is_silence_segment(segment_audio)
 
                     if not is_silence:  # 只收集非静音片段用于统计
                         audio_segments_for_analysis.append(segment_audio)
@@ -358,9 +352,7 @@ class MediaProcessor:
                     )
 
                     # 静音检测
-                    is_silence = self._is_silence_segment(
-                        segment_audio
-                    )
+                    is_silence = self._is_silence_segment(segment_audio)
 
                     # 质量检查
                     quality_score = self._calculate_audio_quality(
@@ -372,9 +364,7 @@ class MediaProcessor:
                         segment_audio = self._normalize_audio_volume(
                             segment_audio, target_rms
                         )
-                        self.logger.debug(
-                            f"片段 {i + 1} 音量已归一化到舒适听感标准"
-                        )
+                        self.logger.debug(f"片段 {i + 1} 音量已归一化到舒适听感标准")
                     elif not normalize_volume:
                         self.logger.debug(f"片段 {i + 1} 保持原始音量")
 
@@ -390,9 +380,7 @@ class MediaProcessor:
                         "text": text,  # 可能为空字符串
                         "start_time": start_time,
                         "end_time": end_time,
-                        "duration": round(
-                            end_time - start_time, 3
-                        ),  # 保留3位小数精度
+                        "duration": round(end_time - start_time, 3),  # 保留3位小数精度
                         "file_path": str(segment_path),
                         "quality_score": quality_score,
                         "sample_rate": sample_rate,
@@ -424,12 +412,8 @@ class MediaProcessor:
                 1 for seg in reference_segments if seg.get("is_silence", False)
             )
             if silence_count > 0:
-                self.logger.info(
-                    f"检测到 {silence_count} 个静音片段，开始替换处理..."
-                )
-                reference_segments = self._replace_silence_segments(
-                    reference_segments
-                )
+                self.logger.info(f"检测到 {silence_count} 个静音片段，开始替换处理...")
+                reference_segments = self._replace_silence_segments(reference_segments)
             else:
                 self.logger.info("未检测到静音片段")
 
@@ -451,9 +435,7 @@ class MediaProcessor:
                 "silence_detection": {
                     "silence_segments_found": silence_count,
                     "segments_replaced": sum(
-                        1
-                        for seg in reference_segments
-                        if seg.get("replaced_with")
+                        1 for seg in reference_segments if seg.get("replaced_with")
                     ),
                     "best_quality_segment": (
                         max(
@@ -469,9 +451,7 @@ class MediaProcessor:
                     "sample_rate": sample_rate,
                     "duration": len(audio_data) / sample_rate,
                     "channels": (
-                        1
-                        if len(audio_data.shape) == 1
-                        else audio_data.shape[1]
+                        1 if len(audio_data.shape) == 1 else audio_data.shape[1]
                     ),
                 },
             }
@@ -538,14 +518,10 @@ class MediaProcessor:
                     continue
 
                 # 计算时间戳（秒）
-                start_h, start_m, start_s, start_ms = map(
-                    int, time_match.groups()[:4]
-                )
+                start_h, start_m, start_s, start_ms = map(int, time_match.groups()[:4])
                 end_h, end_m, end_s, end_ms = map(int, time_match.groups()[4:])
 
-                start_time = (
-                        start_h * 3600 + start_m * 60 + start_s + start_ms / 1000.0
-                )
+                start_time = start_h * 3600 + start_m * 60 + start_s + start_ms / 1000.0
                 end_time = end_h * 3600 + end_m * 60 + end_s + end_ms / 1000.0
 
                 # 合并文本行并基本清理（如果有文本行的话）
@@ -560,9 +536,7 @@ class MediaProcessor:
                     "start_time": start_time,
                     "end_time": end_time,
                     "text": text,  # 可能为空字符串
-                    "duration": round(
-                        end_time - start_time, 3
-                    ),  # 保留3位小数精度
+                    "duration": round(end_time - start_time, 3),  # 保留3位小数精度
                 }
                 entries.append(entry)
 
@@ -596,9 +570,7 @@ class MediaProcessor:
         """加载音频文件"""
         try:
             # 优先使用librosa
-            audio_data, sample_rate = librosa.load(
-                audio_path, sr=None, mono=True
-            )
+            audio_data, sample_rate = librosa.load(audio_path, sr=None, mono=True)
             return audio_data, sample_rate
         except Exception:
             # 备选方案：使用soundfile
@@ -611,11 +583,11 @@ class MediaProcessor:
                 raise Exception(f"无法加载音频文件: {str(e)}")
 
     def _extract_audio_segment(
-            self,
-            audio_data: np.ndarray,
-            sample_rate: int,
-            start_time: float,
-            end_time: float,
+        self,
+        audio_data: np.ndarray,
+        sample_rate: int,
+        start_time: float,
+        end_time: float,
     ) -> np.ndarray:
         """提取音频片段"""
         try:
@@ -643,7 +615,7 @@ class MediaProcessor:
             return np.array([])
 
     def _trim_silence(
-            self, audio_data: np.ndarray, threshold: float = 0.01
+        self, audio_data: np.ndarray, threshold: float = 0.01
     ) -> np.ndarray:
         """去除音频开头和结尾的静音"""
         if len(audio_data) == 0:
@@ -666,7 +638,7 @@ class MediaProcessor:
         return audio_data[start_idx:end_idx]
 
     def _calculate_audio_quality(
-            self, audio_data: np.ndarray, sample_rate: int
+        self, audio_data: np.ndarray, sample_rate: int
     ) -> float:
         """计算音频质量分数"""
         if len(audio_data) == 0:
@@ -685,28 +657,26 @@ class MediaProcessor:
                 duration_score = max(0.1, 3.0 / duration)
 
             # 2. 音量评分
-            rms = np.sqrt(np.mean(audio_data ** 2))
+            rms = np.sqrt(np.mean(audio_data**2))
             volume_score = min(1.0, rms / 0.1)  # 假设0.1为理想RMS
 
             # 3. 动态范围评分
-            dynamic_range = np.max(np.abs(audio_data)) - np.mean(
-                np.abs(audio_data)
-            )
+            dynamic_range = np.max(np.abs(audio_data)) - np.mean(np.abs(audio_data))
             range_score = min(1.0, dynamic_range / 0.5)
 
             # 4. 静音比例评分（静音越少越好）
             silence_threshold = 0.01
-            silence_ratio = np.sum(
-                np.abs(audio_data) < silence_threshold
-            ) / len(audio_data)
+            silence_ratio = np.sum(np.abs(audio_data) < silence_threshold) / len(
+                audio_data
+            )
             silence_score = max(0.1, 1.0 - silence_ratio)
 
             # 综合评分
             total_score = (
-                    duration_score * 0.3
-                    + volume_score * 0.3
-                    + range_score * 0.2
-                    + silence_score * 0.2
+                duration_score * 0.3
+                + volume_score * 0.3
+                + range_score * 0.2
+                + silence_score * 0.2
             )
 
             return min(1.0, total_score)
@@ -715,10 +685,10 @@ class MediaProcessor:
             return 0.5  # 默认中等质量
 
     def _is_silence_segment(
-            self,
-            audio_data: np.ndarray,
-            silence_threshold: float = 0.01,
-            silence_ratio_threshold: float = 0.8,
+        self,
+        audio_data: np.ndarray,
+        silence_threshold: float = 0.01,
+        silence_ratio_threshold: float = 0.8,
     ) -> bool:
         """检测音频片段是否为静音"""
         if len(audio_data) == 0:
@@ -726,12 +696,12 @@ class MediaProcessor:
 
         try:
             # 计算RMS能量
-            rms = np.sqrt(np.mean(audio_data ** 2))
+            rms = np.sqrt(np.mean(audio_data**2))
 
             # 计算静音比例
-            silence_ratio = np.sum(
-                np.abs(audio_data) < silence_threshold
-            ) / len(audio_data)
+            silence_ratio = np.sum(np.abs(audio_data) < silence_threshold) / len(
+                audio_data
+            )
 
             # 如果RMS过低或静音比例过高，认为是静音片段
             is_silence = rms < 0.005 or silence_ratio > silence_ratio_threshold
@@ -795,16 +765,10 @@ class MediaProcessor:
                         shutil.copy2(best_audio_path, silence_audio_path)
 
                         # 更新片段信息
-                        silence_segment["quality_score"] = best_segment[
-                            "quality_score"
-                        ]
-                        silence_segment["audio_length"] = best_segment[
-                            "audio_length"
-                        ]
+                        silence_segment["quality_score"] = best_segment["quality_score"]
+                        silence_segment["audio_length"] = best_segment["audio_length"]
                         silence_segment["is_silence"] = False
-                        silence_segment["replaced_with"] = best_segment[
-                            "index"
-                        ]
+                        silence_segment["replaced_with"] = best_segment["index"]
 
                         replaced_count += 1
                         self.logger.info(
@@ -828,7 +792,7 @@ class MediaProcessor:
             return reference_segments
 
     def _save_results_to_json(
-            self, results: Dict[str, Any], output_dir: str, audio_name: str
+        self, results: Dict[str, Any], output_dir: str, audio_name: str
     ) -> str:
         """保存结果到JSON文件"""
         try:
@@ -874,7 +838,7 @@ class MediaProcessor:
             return ""
 
     def _load_cached_results(
-            self, audio_path: str, subtitle_path: str, output_dir: str
+        self, audio_path: str, subtitle_path: str, output_dir: str
     ) -> Optional[Dict[str, Any]]:
         """加载缓存的结果"""
         try:
@@ -903,10 +867,10 @@ class MediaProcessor:
         """时间对象转换为秒数"""
         if isinstance(time_obj, datetime.time):
             return (
-                    time_obj.hour * 3600
-                    + time_obj.minute * 60
-                    + time_obj.second
-                    + time_obj.microsecond / 1000000
+                time_obj.hour * 3600
+                + time_obj.minute * 60
+                + time_obj.second
+                + time_obj.microsecond / 1000000
             )
         elif isinstance(time_obj, (int, float)):
             return float(time_obj)
@@ -914,7 +878,7 @@ class MediaProcessor:
             return 0.0
 
     def _analyze_target_volume(
-            self, audio_segments: List[np.ndarray]
+        self, audio_segments: List[np.ndarray]
     ) -> floating[Any] | None:
         """
         分析音频片段，确定目标音量级别
@@ -963,7 +927,7 @@ class MediaProcessor:
             return None
 
     def _normalize_audio_volume(
-            self, audio: np.ndarray, target_rms: float
+        self, audio: np.ndarray, target_rms: float
     ) -> np.ndarray:
         """
         将音频归一化到固定的舒适听感音量级别
@@ -1012,10 +976,10 @@ class MediaProcessor:
             return audio
 
     def merge_audio_video(
-            self,
-            video_path: str,
-            audio_path: str,
-            output_path: Optional[str] = None,
+        self,
+        video_path: str,
+        audio_path: str,
+        output_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         合并音频和视频文件，自动处理时长差异
@@ -1070,9 +1034,7 @@ class MediaProcessor:
                 output_path = Path(output_path)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            self.logger.info(
-                f"开始合并音视频: 视频={video_path}, 音频={audio_path}"
-            )
+            self.logger.info(f"开始合并音视频: 视频={video_path}, 音频={audio_path}")
 
             # 获取音视频时长
             video_duration = self._get_video_duration(video_path)
@@ -1127,59 +1089,43 @@ class MediaProcessor:
             return {"success": False, "error": str(e)}
 
     def _merge_audio_video_ffmpeg(
-            self, video_path: str, audio_path: str, output_path: str
+        self, video_path: str, audio_path: str, output_path: str
     ):
         """使用ffmpeg合并音频和视频"""
         try:
             # 根据输出格式选择合适的编码器
             output_ext = Path(output_path).suffix.lower()
-            
+
             # 基础参数
             output_params = {
-                'acodec': 'aac',  # 音频编码器
-                'audio_bitrate': '128k',  # 音频比特率
-                'crf': 23,  # 视频质量
+                "acodec": "aac",  # 音频编码器
+                "audio_bitrate": "128k",  # 音频比特率
+                "crf": 23,  # 视频质量
             }
-            
+
             # 根据不同格式选择编码器和参数
-            if output_ext in ['.mp4', '.m4v']:
-                output_params.update({
-                    'vcodec': 'libx264',
-                    'preset': 'fast'
-                })
-            elif output_ext in ['.avi']:
-                output_params.update({
-                    'vcodec': 'libx264',
-                    'preset': 'fast'
-                })
-            elif output_ext in ['.mov']:
-                output_params.update({
-                    'vcodec': 'libx264',
-                    'preset': 'fast'
-                })
-            elif output_ext in ['.mkv']:
-                output_params.update({
-                    'vcodec': 'libx264',
-                    'preset': 'fast'
-                })
-            elif output_ext in ['.ts']:
-                output_params.update({
-                    'vcodec': 'libx264',
-                    'preset': 'fast'
-                })
-            elif output_ext in ['.webm']:
-                output_params.update({
-                    'vcodec': 'libvpx-vp9',
-                    'acodec': 'libvorbis'  # WebM 使用 vorbis 音频编码
-                })
-                output_params.pop('preset')  # VP9 不支持preset参数
-                output_params.pop('crf')  # VP9 使用不同的质量控制
+            if output_ext in [".mp4", ".m4v"]:
+                output_params.update({"vcodec": "libx264", "preset": "fast"})
+            elif output_ext in [".avi"]:
+                output_params.update({"vcodec": "libx264", "preset": "fast"})
+            elif output_ext in [".mov"]:
+                output_params.update({"vcodec": "libx264", "preset": "fast"})
+            elif output_ext in [".mkv"]:
+                output_params.update({"vcodec": "libx264", "preset": "fast"})
+            elif output_ext in [".ts"]:
+                output_params.update({"vcodec": "libx264", "preset": "fast"})
+            elif output_ext in [".webm"]:
+                output_params.update(
+                    {
+                        "vcodec": "libvpx-vp9",
+                        "acodec": "libvorbis",  # WebM 使用 vorbis 音频编码
+                    }
+                )
+                output_params.pop("preset")  # VP9 不支持preset参数
+                output_params.pop("crf")  # VP9 使用不同的质量控制
             else:
                 # 默认使用 libx264
-                output_params.update({
-                    'vcodec': 'libx264',
-                    'preset': 'fast'
-                })
+                output_params.update({"vcodec": "libx264", "preset": "fast"})
 
             # 使用ffmpeg-python进行合并
             input_video = ffmpeg.input(video_path)
@@ -1190,7 +1136,7 @@ class MediaProcessor:
                 input_video["v"],  # 视频流
                 input_audio["a"],  # 音频流
                 output_path,
-                **output_params
+                **output_params,
             )
 
             # 执行合并
@@ -1227,13 +1173,13 @@ class MediaProcessor:
                 return 0.0
 
     def _merge_audio_video_with_duration_adjustment(
-            self,
-            video_path: str,
-            audio_path: str,
-            output_path: str,
-            video_duration: float,
-            audio_duration: float,
-            final_duration: float,
+        self,
+        video_path: str,
+        audio_path: str,
+        output_path: str,
+        video_duration: float,
+        audio_duration: float,
+        final_duration: float,
     ):
         """使用ffmpeg合并音视频，带时长调整"""
         try:
@@ -1257,9 +1203,7 @@ class MediaProcessor:
             if video_duration > audio_duration:
                 # 视频较长，需要延长音频（补静音）
                 silence_duration = final_duration - audio_duration
-                audio_stream = input_audio["a"].filter(
-                    "apad", pad_dur=silence_duration
-                )
+                audio_stream = input_audio["a"].filter("apad", pad_dur=silence_duration)
                 self.logger.debug(
                     f"音频延长：从 {audio_duration:.2f}s 到 {final_duration:.2f}s"
                 )
@@ -1302,9 +1246,7 @@ def get_media_processor() -> MediaProcessor:
 
 
 # 便捷函数
-def separate_media(
-        video_path: str, output_dir: Optional[str] = None
-) -> Dict[str, Any]:
+def separate_media(video_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
     """
     便捷函数：分离视频中的人声、无声视频和背景音乐
 
@@ -1319,10 +1261,10 @@ def separate_media(
 
 
 def generate_reference_audio(
-        audio_path: str,
-        subtitle_path: str,
-        output_dir: Optional[str] = None,
-        normalize_volume: bool = True,
+    audio_path: str,
+    subtitle_path: str,
+    output_dir: Optional[str] = None,
+    normalize_volume: bool = True,
 ) -> Dict[str, Any]:
     """
     便捷函数：根据字幕分隔音频生成参考音频
@@ -1342,7 +1284,7 @@ def generate_reference_audio(
 
 
 def merge_audio_video(
-        video_path: str, audio_path: str, output_path: Optional[str] = None
+    video_path: str, audio_path: str, output_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     便捷函数：合并音频和视频文件
@@ -1355,6 +1297,4 @@ def merge_audio_video(
     Returns:
         包含合并结果的字典
     """
-    return get_media_processor().merge_audio_video(
-        video_path, audio_path, output_path
-    )
+    return get_media_processor().merge_audio_video(video_path, audio_path, output_path)
