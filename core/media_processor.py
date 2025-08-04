@@ -74,9 +74,10 @@ class MediaProcessor:
                 output_dir.mkdir(parents=True, exist_ok=True)
 
             video_name = Path(video_path).stem
+            video_ext = Path(video_path).suffix  # 获取原始视频格式
 
-            # 定义输出文件路径
-            silent_video_path = output_dir / f"{video_name}_silent.mp4"
+            # 定义输出文件路径 - 使用原始视频格式
+            silent_video_path = output_dir / f"{video_name}_silent{video_ext}"
             raw_audio_path = output_dir / f"{video_name}_raw_audio.wav"
             vocal_audio_path = output_dir / f"{video_name}_vocal.wav"
             background_audio_path = output_dir / f"{video_name}_background.wav"
@@ -129,11 +130,33 @@ class MediaProcessor:
     def _create_silent_video(self, video_path: str, silent_video_path: str):
         """创建无声视频"""
         try:
+            # 根据输出格式选择合适的编码器
+            output_ext = Path(silent_video_path).suffix.lower()
+            
+            # 设置编码参数
+            output_params = {
+                'preset': 'fast'
+            }
+            
+            # 根据不同格式选择编码器和参数
+            if output_ext in ['.mp4', '.m4v']:
+                output_params['vcodec'] = 'libx264'
+            elif output_ext in ['.avi']:
+                output_params['vcodec'] = 'libx264'
+            elif output_ext in ['.mov']:
+                output_params['vcodec'] = 'libx264'
+            elif output_ext in ['.mkv']:
+                output_params['vcodec'] = 'libx264'
+            elif output_ext in ['.webm']:
+                output_params['vcodec'] = 'libvpx-vp9'
+                output_params.pop('preset')  # VP9 不支持preset参数
+            else:
+                # 默认使用 libx264
+                output_params['vcodec'] = 'libx264'
+            
             (
                 ffmpeg.input(video_path)
-                .video.output(
-                    silent_video_path, vcodec="libx264", preset="fast"
-                )
+                .video.output(silent_video_path, **output_params)
                 .overwrite_output()
                 .run(quiet=True)
             )
@@ -1106,6 +1129,51 @@ class MediaProcessor:
     ):
         """使用ffmpeg合并音频和视频"""
         try:
+            # 根据输出格式选择合适的编码器
+            output_ext = Path(output_path).suffix.lower()
+            
+            # 基础参数
+            output_params = {
+                'acodec': 'aac',  # 音频编码器
+                'audio_bitrate': '128k',  # 音频比特率
+                'crf': 23,  # 视频质量
+            }
+            
+            # 根据不同格式选择编码器和参数
+            if output_ext in ['.mp4', '.m4v']:
+                output_params.update({
+                    'vcodec': 'libx264',
+                    'preset': 'fast'
+                })
+            elif output_ext in ['.avi']:
+                output_params.update({
+                    'vcodec': 'libx264',
+                    'preset': 'fast'
+                })
+            elif output_ext in ['.mov']:
+                output_params.update({
+                    'vcodec': 'libx264',
+                    'preset': 'fast'
+                })
+            elif output_ext in ['.mkv']:
+                output_params.update({
+                    'vcodec': 'libx264',
+                    'preset': 'fast'
+                })
+            elif output_ext in ['.webm']:
+                output_params.update({
+                    'vcodec': 'libvpx-vp9',
+                    'acodec': 'libvorbis'  # WebM 使用 vorbis 音频编码
+                })
+                output_params.pop('preset')  # VP9 不支持preset参数
+                output_params.pop('crf')  # VP9 使用不同的质量控制
+            else:
+                # 默认使用 libx264
+                output_params.update({
+                    'vcodec': 'libx264',
+                    'preset': 'fast'
+                })
+
             # 使用ffmpeg-python进行合并
             input_video = ffmpeg.input(video_path)
             input_audio = ffmpeg.input(audio_path)
@@ -1115,11 +1183,7 @@ class MediaProcessor:
                 input_video["v"],  # 视频流
                 input_audio["a"],  # 音频流
                 output_path,
-                vcodec="libx264",  # 视频编码器
-                acodec="aac",  # 音频编码器
-                preset="fast",  # 编码预设
-                crf=23,  # 视频质量
-                audio_bitrate="128k",  # 音频比特率
+                **output_params
             )
 
             # 执行合并

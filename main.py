@@ -15,12 +15,10 @@ def main():
 
     # 处理单个视频
     video_path = r'C:\Users\leica\Desktop\1\13. 日线图、周线图和月线图.mp4'
-    subtitle_path = r'C:\Users\leica\Desktop\1\13. 日线图、周线图和月线图.ass'
 
     print(f"开始处理视频: {video_path}")
-    print(f"字幕文件: {subtitle_path}")
 
-    result = pipeline.process_video(video_path, subtitle_path)
+    result = pipeline.process_video(video_path)
 
     if result['success']:
         print(f"处理成功！")

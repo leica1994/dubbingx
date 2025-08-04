@@ -1817,7 +1817,7 @@ class AudioAlignProcessor:
                     # 生成变速后的文件路径
                     original_path = Path(segment["segment_file_path"])
                     speed_filename = (
-                        f"{original_path.stem}_speed_{speed_ratio:.2f}.mp4"
+                        f"{original_path.stem}_speed_{speed_ratio:.2f}{original_path.suffix}"
                     )
                     speed_file_path = original_path.parent / speed_filename
 
@@ -1957,7 +1957,7 @@ class AudioAlignProcessor:
             output_dir = main_output_dir / "adjusted_video"
             output_dir.mkdir(parents=True, exist_ok=True)
             final_video_path = (
-                    output_dir / f"final_speed_adjusted_{video_file.stem}.mp4"
+                    output_dir / f"final_speed_adjusted_{video_file.stem}{video_file.suffix}"
             )
 
             # 收集有效的视频片段文件
@@ -2154,8 +2154,9 @@ class AudioAlignProcessor:
 
             for segment in segments:
                 try:
-                    # 生成输出文件名
-                    segment_filename = f"segment_{segment['index']:04d}_{segment['segment_type']}.mp4"
+                    # 生成输出文件名 - 使用原始视频格式
+                    video_ext = Path(silent_video_path).suffix
+                    segment_filename = f"segment_{segment['index']:04d}_{segment['segment_type']}{video_ext}"
                     segment_path = segments_dir / segment_filename
 
                     # 构建ffmpeg命令

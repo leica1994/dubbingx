@@ -29,6 +29,7 @@ class DubbingPaths:
         """
         self.video_path = Path(video_path)
         self.video_name = self.video_path.stem
+        self.video_ext = self.video_path.suffix  # 保存原始视频格式
 
         # 处理字幕文件路径
         if subtitle_path:
@@ -100,7 +101,7 @@ class DubbingPaths:
         self._processed_subtitle = self.output_dir / f"{self.video_name}_processed.srt"
         self._vocal_audio = self._media_separation_dir / f"{self.video_name}_vocal.wav"
         self._background_audio = self._media_separation_dir / f"{self.video_name}_background.wav"
-        self._silent_video = self._media_separation_dir / f"{self.video_name}_silent.mp4"
+        self._silent_video = self._media_separation_dir / f"{self.video_name}_silent{self.video_ext}"
         self._reference_audio_dir = self.output_dir / "reference_audio"
         self._tts_output_dir = self.output_dir / "tts_output"
         self._aligned_audio_dir = self.output_dir / "aligned_audio"
@@ -110,8 +111,8 @@ class DubbingPaths:
         self._aligned_results = self._aligned_audio_dir / "aligned_tts_generation_results.json"
         self._aligned_audio = self._aligned_audio_dir / "aligned_tts_generation_results.wav"
         self._aligned_srt = self._aligned_audio_dir / "aligned_tts_generation_aligned.srt"
-        self._final_video = self.output_dir / f"{self.video_name}_dubbed.mp4"
-        self._speed_adjusted_video = self._adjusted_video_dir / f"final_speed_adjusted_{self.video_name}_silent.mp4"
+        self._final_video = self.output_dir / f"{self.video_name}_dubbed{self.video_ext}"
+        self._speed_adjusted_video = self._adjusted_video_dir / f"final_speed_adjusted_{self.video_name}_silent{self.video_ext}"
         self._pipeline_cache = self.output_dir / f"{self.video_name}_pipeline_cache.json"
 
         # 创建必要的子目录
