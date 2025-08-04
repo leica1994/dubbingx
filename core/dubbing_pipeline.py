@@ -96,7 +96,7 @@ class DubbingPaths:
         """初始化所有文件路径"""
         # 为分离后的媒体文件创建子目录
         self._media_separation_dir = self.output_dir / "media_separation"
-        
+
         # 初始化所有文件路径
         self._processed_subtitle = self.output_dir / f"{self.video_name}_processed.srt"
         self._vocal_audio = self._media_separation_dir / f"{self.video_name}_vocal.wav"
@@ -116,7 +116,7 @@ class DubbingPaths:
         self._pipeline_cache = self.output_dir / f"{self.video_name}_pipeline_cache.json"
 
         # 创建必要的子目录
-        for dir_path in [self._media_separation_dir, self._reference_audio_dir, self._tts_output_dir, 
+        for dir_path in [self._media_separation_dir, self._reference_audio_dir, self._tts_output_dir,
                          self._aligned_audio_dir, self._adjusted_video_dir]:
             dir_path.mkdir(exist_ok=True)
 
@@ -140,7 +140,7 @@ class DubbingPaths:
     @property
     def media_separation_dir(self) -> Path:
         return self._media_separation_dir
-    
+
     @property
     def reference_audio_dir(self) -> Path:
         return self._reference_audio_dir
@@ -201,7 +201,7 @@ class DubbingPaths:
 
     def get_silent_video(self) -> Path:
         return self._silent_video
-    
+
     def get_media_separation_dir(self) -> Path:
         return self._media_separation_dir
 
@@ -538,7 +538,7 @@ class DubbingPipeline:
         return True
 
     def process_video(self, video_path: str, subtitle_path: Optional[str] = None, resume_from_cache: bool = True) -> \
-    Dict[str, Any]:
+            Dict[str, Any]:
         """
         处理视频配音的完整流程
         

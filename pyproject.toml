@@ -21,11 +21,7 @@ dependencies = [
     # 视频处理
     "ffmpeg-python",
     # TTS集成
-    "gradio-client",
-    # 语音识别
-    "faster-whisper",
-    # 模型下载
-    "modelscope",
+    "gradio-client"
 ]
 
 [build-system]
