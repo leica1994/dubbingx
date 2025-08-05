@@ -9,88 +9,87 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
-from .task import ProcessResult, ResourceType, Task, TaskStatus
+from .task import ProcessResult, Task, TaskStatus
 
 
 class StepProcessor(ABC):
     """抽象步骤处理器基类"""
-    
+
     def __init__(
-        self, 
+        self,
         step_id: int,
-        step_name: str, 
-        resource_type: ResourceType,
+        step_name: str,
         timeout: Optional[float] = None,
-        max_retries: int = 3
+        max_retries: int = 3,
     ):
         """
         初始化步骤处理器
-        
+
         Args:
             step_id: 步骤ID (0-7)
             step_name: 步骤名称
-            resource_type: 所需资源类型
             timeout: 处理超时时间（秒）
             max_retries: 最大重试次数
         """
         self.step_id = step_id
         self.step_name = step_name
-        self.resource_type = resource_type
         self.timeout = timeout
         self.max_retries = max_retries
-        
+
         self.logger = logging.getLogger(f"{__name__}.{step_name}")
-        
+
         # 统计信息
         self._total_processed = 0
         self._total_success = 0
         self._total_failed = 0
         self._total_retries = 0
         self._processing_times = []
-    
+
     def process_task(self, task: Task) -> ProcessResult:
         """
         处理任务的主入口方法
-        
+
         Args:
             task: 要处理的任务
-            
+
         Returns:
             处理结果
         """
         start_time = time.time()
         self.logger.info(f"开始处理任务 {task.task_id} - 步骤: {self.step_name}")
-        
+
         # 更新任务状态
         task.update_status(TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}")
-        
+
         try:
             # 验证任务是否可以处理
             validation_result = self._validate_task(task)
             if not validation_result.success:
                 self._update_stats(False)
                 return validation_result
-            
+
             # 检查是否已完成（用于缓存恢复）
             if task.is_step_completed(self.step_id):
-                self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 已完成，跳过处理")
+                self.logger.info(
+                    f"任务 {task.task_id} 步骤 {self.step_name} 已完成，跳过处理"
+                )
                 result = task.get_step_result(self.step_id)
                 if result:
                     return result
-            
+
             # 执行具体处理逻辑
             result = self._execute_process(task)
-            
+
             # 记录处理时间
             processing_time = time.time() - start_time
             result.processing_time = processing_time
-            
+
             # 更新统计信息
             self._update_stats(result.success, processing_time)
-            
+
             # 设置任务步骤结果
             task.set_step_result(self.step_id, result)
-            
+
             if result.success:
                 self.logger.info(
                     f"任务 {task.task_id} 步骤 {self.step_name} 处理成功 "
@@ -100,121 +99,119 @@ class StepProcessor(ABC):
                 self.logger.error(
                     f"任务 {task.task_id} 步骤 {self.step_name} 处理失败: {result.error}"
                 )
-            
+
             return result
-            
+
         except Exception as e:
             processing_time = time.time() - start_time
             error_msg = f"步骤 {self.step_name} 处理异常: {str(e)}"
-            
+
             self.logger.error(f"任务 {task.task_id} - {error_msg}", exc_info=True)
-            
+
             result = ProcessResult(
                 success=False,
                 message=error_msg,
                 error=str(e),
-                processing_time=processing_time
+                processing_time=processing_time,
             )
-            
+
             # 更新统计信息
             self._update_stats(False, processing_time)
-            
+
             # 设置任务步骤结果
             task.set_step_result(self.step_id, result)
-            
+
             return result
-    
+
     @abstractmethod
     def _execute_process(self, task: Task) -> ProcessResult:
         """
         执行具体的处理逻辑（子类必须实现）
-        
+
         Args:
             task: 要处理的任务
-            
+
         Returns:
             处理结果
         """
         pass
-    
+
     def _validate_task(self, task: Task) -> ProcessResult:
         """
         验证任务是否可以处理
-        
+
         Args:
             task: 要验证的任务
-            
+
         Returns:
             验证结果
         """
         # 检查任务状态
         if task.status == TaskStatus.CANCELLED:
             return ProcessResult(
-                success=False,
-                message="任务已取消",
-                error="任务已取消，无法继续处理"
+                success=False, message="任务已取消", error="任务已取消，无法继续处理"
             )
-        
+
         # 检查步骤顺序
         if task.current_step != self.step_id:
             return ProcessResult(
                 success=False,
                 message=f"步骤顺序错误: 期望步骤 {self.step_id}，当前步骤 {task.current_step}",
-                error=f"任务 {task.task_id} 步骤顺序不正确"
+                error=f"任务 {task.task_id} 步骤顺序不正确",
             )
-        
+
         # 检查依赖步骤是否完成
         for dep_step in range(self.step_id):
             if not task.is_step_completed(dep_step):
                 return ProcessResult(
                     success=False,
                     message=f"依赖步骤 {dep_step} 未完成",
-                    error=f"步骤 {dep_step} 必须在步骤 {self.step_id} 之前完成"
+                    error=f"步骤 {dep_step} 必须在步骤 {self.step_id} 之前完成",
                 )
-        
+
         return ProcessResult(success=True, message="任务验证通过")
-    
+
     def _update_stats(self, success: bool, processing_time: float = 0.0) -> None:
         """更新统计信息"""
         self._total_processed += 1
-        
+
         if success:
             self._total_success += 1
         else:
             self._total_failed += 1
-        
+
         if processing_time > 0:
             self._processing_times.append(processing_time)
             # 只保留最近1000条记录
             if len(self._processing_times) > 1000:
                 self._processing_times = self._processing_times[-1000:]
-    
+
     def get_next_step_id(self) -> Optional[int]:
         """获取下一个步骤ID"""
         next_id = self.step_id + 1
         return next_id if next_id < 8 else None  # 总共8个步骤 (0-7)
-    
+
     def should_retry(self, task: Task, result: ProcessResult) -> bool:
         """
         判断是否应该重试
-        
+
         Args:
             task: 任务对象
             result: 处理结果
-            
+
         Returns:
             是否应该重试
         """
         if result.success:
             return False
-        
+
         if not task.can_retry():
             return False
-        
+
         # 可以根据错误类型决定是否重试
         # 例如：网络错误可以重试，文件不存在错误不重试
         return True
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """获取处理器统计信息"""
         success_rate = (
@@ -222,20 +219,23 @@ class StepProcessor(ABC):
             if self._total_processed > 0
             else 0.0
         )
-        
+
         avg_processing_time = (
             sum(self._processing_times) / len(self._processing_times)
             if self._processing_times
             else 0.0
         )
-        
-        max_processing_time = max(self._processing_times) if self._processing_times else 0.0
-        min_processing_time = min(self._processing_times) if self._processing_times else 0.0
-        
+
+        max_processing_time = (
+            max(self._processing_times) if self._processing_times else 0.0
+        )
+        min_processing_time = (
+            min(self._processing_times) if self._processing_times else 0.0
+        )
+
         return {
             "step_id": self.step_id,
             "step_name": self.step_name,
-            "resource_type": self.resource_type.value,
             "total_processed": self._total_processed,
             "total_success": self._total_success,
             "total_failed": self._total_failed,
@@ -247,7 +247,7 @@ class StepProcessor(ABC):
             "timeout": self.timeout,
             "max_retries": self.max_retries,
         }
-    
+
     def reset_stats(self) -> None:
         """重置统计信息"""
         self._total_processed = 0
@@ -255,39 +255,41 @@ class StepProcessor(ABC):
         self._total_failed = 0
         self._total_retries = 0
         self._processing_times = []
-        
+
         self.logger.info(f"步骤 {self.step_name} 统计信息已重置")
-    
+
     def can_process(self, task: Task) -> bool:
         """
         检查是否可以处理指定任务
-        
+
         Args:
             task: 要检查的任务
-            
+
         Returns:
             是否可以处理
         """
         validation_result = self._validate_task(task)
         return validation_result.success
-    
+
     def estimate_processing_time(self) -> float:
         """
         估算处理时间
-        
+
         Returns:
             预估处理时间（秒）
         """
         if not self._processing_times:
             return 60.0  # 默认估算1分钟
-        
+
         # 返回平均处理时间
         return sum(self._processing_times) / len(self._processing_times)
-    
+
     def __str__(self) -> str:
         """字符串表示"""
-        return f"StepProcessor(id={self.step_id}, name={self.step_name}, resource={self.resource_type.value})"
-    
+        return (
+            f"StepProcessor(id={self.step_id}, name={self.step_name})"
+        )
+
     def __repr__(self) -> str:
         """调试表示"""
         return self.__str__()

@@ -1816,11 +1816,9 @@ class StreamlinePipeline(DubbingPipeline):
         
         # 导入流水线组件
         from .pipeline import (
-            ResourceManager,
             TaskScheduler,
             Task,
             TaskStatus,
-            ResourceType,
         )
         from .pipeline.processors import (
             PreprocessSubtitleProcessor,
@@ -1833,23 +1831,8 @@ class StreamlinePipeline(DubbingPipeline):
             MergeAudioVideoProcessor,
         )
         
-        # 初始化组件
-        self.resource_manager = ResourceManager(
-            gpu_count=2,
-            cpu_count=4,
-            io_count=8
-        )
-        
-        # 工作线程配置
-        optimized_workers = {
-            ResourceType.GPU_INTENSIVE: 2,
-            ResourceType.CPU_INTENSIVE: 4,
-            ResourceType.IO_INTENSIVE: 8,
-        }
-        self.task_scheduler = TaskScheduler(
-            resource_manager=self.resource_manager,
-            max_workers_per_step=optimized_workers
-        )
+        # 初始化任务调度器（使用简化版本，无资源管理）
+        self.task_scheduler = TaskScheduler()
         
         # 注册所有步骤处理器
         processors = [
