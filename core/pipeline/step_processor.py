@@ -9,7 +9,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
-from .task import ProcessResult, Task, TaskStatus
+from .task import ProcessResult, Task, TaskStatus, StepStatus, StepProgressDetail
 
 
 class StepProcessor(ABC):
@@ -68,37 +68,66 @@ class StepProcessor(ABC):
                 self._update_stats(False)
                 return validation_result
 
-            # 检查是否已完成（用于缓存恢复）
-            if task.is_step_completed(self.step_id):
-                self.logger.info(
-                    f"任务 {task.task_id} 步骤 {self.step_name} 已完成，跳过处理"
-                )
+            # 初始化步骤详细信息
+            step_detail = task.init_step_detail(self.step_id, self.step_name)
+            
+            # 检查步骤状态
+            step_status = task.get_step_status(self.step_id)
+            
+            if step_status == StepStatus.COMPLETED:
+                # 步骤已完成，跳过处理
+                self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 已完成，跳过处理")
                 result = task.get_step_result(self.step_id)
                 if result:
                     return result
-
-            # 执行具体处理逻辑
-            result = self._execute_process(task)
+            elif step_status == StepStatus.PROCESSING:
+                # 步骤之前中断了，需要从中断处继续
+                self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 从中断处继续执行")
+                step_detail.status = StepStatus.PROCESSING
+                result = self._resume_from_interruption(task, step_detail)
+            else:
+                # 步骤未进行，从头开始
+                self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 开始执行")
+                step_detail.status = StepStatus.PROCESSING
+                task.update_status(TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}")
+                result = self._execute_process(task, step_detail)
 
             # 记录处理时间
             processing_time = time.time() - start_time
             result.processing_time = processing_time
+            result.step_detail = step_detail
 
             # 更新统计信息
             self._update_stats(result.success, processing_time)
 
-            # 设置任务步骤结果
-            task.set_step_result(self.step_id, result)
-
+            # 根据结果更新步骤状态
             if result.success:
+                step_detail.status = StepStatus.COMPLETED
                 self.logger.info(
                     f"任务 {task.task_id} 步骤 {self.step_name} 处理成功 "
                     f"(耗时: {processing_time:.2f}s)"
                 )
+            elif getattr(result, 'partial_success', False):
+                # 部分成功，保持当前状态（可能是PROCESSING）
+                self.logger.warning(
+                    f"任务 {task.task_id} 步骤 {self.step_name} 部分成功 "
+                    f"(耗时: {processing_time:.2f}s)"
+                )
             else:
+                step_detail.status = StepStatus.FAILED
                 self.logger.error(
                     f"任务 {task.task_id} 步骤 {self.step_name} 处理失败: {result.error}"
                 )
+                
+            # 设置任务步骤结果
+            task.set_step_result(self.step_id, result)
+
+            # 保存缓存（如果任务有路径信息）
+            if task.paths and "pipeline_cache" in task.paths:
+                from pathlib import Path
+                cache_path = Path(task.paths["pipeline_cache"])
+                if task.save_to_cache(cache_path):
+                    self.logger.debug(f"任务 {task.task_id} 缓存已更新")
 
             return result
 
@@ -115,26 +144,42 @@ class StepProcessor(ABC):
                 processing_time=processing_time,
             )
 
-            # 更新统计信息
+            # 更新步骤状态为失败
+            if self.step_id in task.step_details:
+                task.step_details[self.step_id].status = StepStatus.FAILED
+
             self._update_stats(False, processing_time)
-
-            # 设置任务步骤结果
-            task.set_step_result(self.step_id, result)
-
             return result
 
     @abstractmethod
-    def _execute_process(self, task: Task) -> ProcessResult:
+    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
         """
         执行具体的处理逻辑（子类必须实现）
 
         Args:
             task: 要处理的任务
+            step_detail: 步骤详细信息
 
         Returns:
             处理结果
         """
         pass
+
+    def _resume_from_interruption(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+        """
+        从中断处恢复执行（默认实现，子类可以重写）
+        
+        Args:
+            task: 要处理的任务
+            step_detail: 步骤详细信息
+            
+        Returns:
+            处理结果
+        """
+        # 默认行为：重新执行整个步骤
+        self.logger.info(f"步骤 {self.step_name} 使用默认恢复策略：重新执行")
+        step_detail.status = StepStatus.PROCESSING
+        return self._execute_process(task, step_detail)
 
     def _validate_task(self, task: Task) -> ProcessResult:
         """

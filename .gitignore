@@ -39,7 +39,6 @@ htmlcov/
 # 项目特定
 outputs/
 temp/
-cache/
 logs/
 *.log
 

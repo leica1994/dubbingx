@@ -6,9 +6,10 @@
 
 from pathlib import Path
 
-from ...subtitle_preprocessor import preprocess_subtitle
+from core.util import sanitize_filename
+from .subtitle_preprocessor import preprocess_subtitle_core
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task
+from ..task import ProcessResult, Task, StepProgressDetail
 
 
 class PreprocessSubtitleProcessor(StepProcessor):
@@ -22,7 +23,7 @@ class PreprocessSubtitleProcessor(StepProcessor):
             max_retries=3,
         )
 
-    def _execute_process(self, task: Task) -> ProcessResult:
+    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
         """执行字幕预处理"""
         try:
             # 验证字幕文件路径
@@ -41,15 +42,16 @@ class PreprocessSubtitleProcessor(StepProcessor):
                     error=f"文件不存在: {task.subtitle_path}",
                 )
 
-            # 获取输出目录
+            # 获取输出目录，使用统一的文件名清理逻辑
             video_path = Path(task.video_path)
-            output_dir = video_path.parent / "outputs" / video_path.stem
+            clean_video_name = sanitize_filename(video_path.stem)
+            output_dir = video_path.parent / "outputs" / clean_video_name
             output_dir.mkdir(parents=True, exist_ok=True)
 
             self.logger.info(f"开始预处理字幕: {task.subtitle_path}")
 
             # 调用字幕预处理功能
-            result = preprocess_subtitle(str(task.subtitle_path), str(output_dir))
+            result = preprocess_subtitle_core(str(task.subtitle_path), str(output_dir))
 
             if not result.get("success", False):
                 return ProcessResult(
@@ -62,11 +64,18 @@ class PreprocessSubtitleProcessor(StepProcessor):
             if not task.paths:
                 task.paths = {}
 
+            # 转换SubtitleEntry对象为字典以支持JSON序列化
+            subtitle_entries = result.get("subtitle_entries", [])
+            subtitle_entries_dict = [
+                entry.to_dict() if hasattr(entry, 'to_dict') else entry 
+                for entry in subtitle_entries
+            ]
+
             task.paths.update(
                 {
                     "output_dir": str(output_dir),
                     "processed_subtitle": result.get("processed_subtitle_path", ""),
-                    "subtitle_entries": result.get("subtitle_entries", []),
+                    "subtitle_entries": subtitle_entries_dict,
                     "total_entries": result.get("total_entries", 0),
                 }
             )

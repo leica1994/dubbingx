@@ -6,9 +6,10 @@
 
 from pathlib import Path
 
-from ...media_processor import separate_media
+from core.util import sanitize_filename
+from .media_processor import separate_media_core
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task
+from ..task import ProcessResult, Task, StepProgressDetail
 
 
 class SeparateMediaProcessor(StepProcessor):
@@ -22,7 +23,7 @@ class SeparateMediaProcessor(StepProcessor):
             max_retries=2,
         )
 
-    def _execute_process(self, task: Task) -> ProcessResult:
+    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
         """执行媒体分离"""
         try:
             # 验证视频文件路径
@@ -37,7 +38,9 @@ class SeparateMediaProcessor(StepProcessor):
             # 获取输出目录
             output_dir = Path(task.paths.get("output_dir", "")) if task.paths else None
             if not output_dir or not output_dir.exists():
-                output_dir = video_path.parent / "outputs" / video_path.stem
+                # 应用文件名清理逻辑，与DubbingPaths保持一致
+                clean_video_name = sanitize_filename(video_path.stem)
+                output_dir = video_path.parent / "outputs" / clean_video_name
                 output_dir.mkdir(parents=True, exist_ok=True)
 
             # 创建媒体分离子目录
@@ -47,7 +50,7 @@ class SeparateMediaProcessor(StepProcessor):
             self.logger.info(f"开始媒体分离: {task.video_path}")
 
             # 调用媒体分离功能
-            result = separate_media(str(task.video_path), str(media_separation_dir))
+            result = separate_media_core(str(task.video_path), str(media_separation_dir))
 
             if not result.get("success", False):
                 return ProcessResult(

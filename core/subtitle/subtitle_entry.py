@@ -20,10 +20,10 @@ class SubtitleEntry:
     actor: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典格式"""
+        """转换为字典格式，支持JSON序列化"""
         return {
-            "start_time": self.start_time,
-            "end_time": self.end_time,
+            "start_time": self.start_time.isoformat(),
+            "end_time": self.end_time.isoformat(),
             "text": self.text,
             "style": self.style,
             "actor": self.actor,
@@ -32,9 +32,18 @@ class SubtitleEntry:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SubtitleEntry":
         """从字典创建字幕条目"""
+        # 处理时间字符串反序列化
+        start_time = data["start_time"]
+        end_time = data["end_time"]
+        
+        if isinstance(start_time, str):
+            start_time = datetime.time.fromisoformat(start_time)
+        if isinstance(end_time, str):
+            end_time = datetime.time.fromisoformat(end_time)
+            
         return cls(
-            start_time=data["start_time"],
-            end_time=data["end_time"],
+            start_time=start_time,
+            end_time=end_time,
             text=data["text"],
             style=data.get("style", "Default"),
             actor=data.get("actor", ""),

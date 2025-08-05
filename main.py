@@ -21,15 +21,20 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox,
                                QTableWidget, QTableWidgetItem, QTabWidget,
                                QTextEdit, QVBoxLayout, QWidget)
 
-from core.audio_align_processor import (align_audio_with_subtitles,
-                                        generate_aligned_srt,
-                                        process_video_speed_adjustment)
-from core.dubbing_pipeline import DubbingPipeline, StreamlinePipeline
-from core.media_processor import (generate_reference_audio, merge_audio_video,
-                                  separate_media)
+from core.pipeline.processors.audio_align_processor import (
+    align_audio_with_subtitles_core as align_audio_with_subtitles,
+    generate_aligned_srt_core as generate_aligned_srt,
+    process_video_speed_adjustment_core as process_video_speed_adjustment
+)
+from core.dubbing_pipeline import StreamlinePipeline
+from core.pipeline.processors.media_processor import (
+    generate_reference_audio_core as generate_reference_audio,
+    merge_audio_video_core as merge_audio_video,
+    separate_media_core as separate_media
+)
 from core.subtitle.subtitle_processor import (convert_subtitle,
                                               sync_srt_timestamps_to_ass)
-from core.subtitle_preprocessor import preprocess_subtitle
+from core.pipeline.processors.subtitle_preprocessor import preprocess_subtitle_core as preprocess_subtitle
 from core.tts_processor import generate_tts_from_reference, initialize_tts_processor
 
 
@@ -111,312 +116,6 @@ class GUIStreamlinePipeline(QObject, StreamlinePipeline):
         
         # 调用父类方法
         return super().process_batch_streamline(video_subtitle_pairs, resume_from_cache)
-
-
-class GUIDubbingPipeline(QObject, DubbingPipeline):
-    """GUI专用的配音处理流水线，支持日志输出"""
-
-    # 信号定义
-    log_message = Signal(str)  # 日志消息
-
-    def __init__(self, output_dir: Optional[str] = None):
-        QObject.__init__(self)
-        DubbingPipeline.__init__(self, output_dir)
-
-        # 设置日志处理器
-        self.setup_logging()
-
-    def setup_logging(self):
-        """设置日志处理器，将日志发送到信号"""
-
-        class SignalLogHandler(logging.Handler):
-            def __init__(self, signal_emitter):
-                super().__init__()
-                self.signal_emitter = signal_emitter
-
-            def emit(self, record):
-                msg = self.format(record)
-                self.signal_emitter.log_message.emit(msg)
-
-        handler = SignalLogHandler(self)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
-
-        # 添加到当前logger
-        self.logger.addHandler(handler)
-
-    def process_video_with_progress(
-        self,
-        video_path: str,
-        subtitle_path: Optional[str] = None,
-        resume_from_cache: bool = True,
-    ) -> Dict[str, Any]:
-        """
-        处理视频配音的完整流程
-        """
-        try:
-            self.logger.info(f"开始处理视频: {video_path}")
-
-            # 获取文件路径
-            paths = self._get_file_paths(video_path, subtitle_path)
-
-            # 初始化缓存
-            cache_data = {
-                "video_path": video_path,
-                "subtitle_path": str(paths.subtitle_path),
-                "output_dir": str(paths.output_dir),
-                "created_at": datetime.now().isoformat(),
-                "completed_steps": {},
-                "file_paths": {
-                    "video_path": str(paths.video_path),
-                    "subtitle_path": str(paths.subtitle_path),
-                    "processed_subtitle": str(paths.processed_subtitle),
-                    "vocal_audio": str(paths.vocal_audio),
-                    "background_audio": str(paths.background_audio),
-                    "silent_video": str(paths.silent_video),
-                    "media_separation_dir": str(paths.media_separation_dir),
-                    "reference_audio_dir": str(paths.reference_audio_dir),
-                    "tts_output_dir": str(paths.tts_output_dir),
-                    "aligned_audio_dir": str(paths.aligned_audio_dir),
-                    "adjusted_video_dir": str(paths.adjusted_video_dir),
-                    "reference_results": str(paths.reference_results),
-                    "tts_results": str(paths.tts_results),
-                    "aligned_results": str(paths.aligned_results),
-                    "aligned_audio": str(paths.aligned_audio),
-                    "aligned_srt": str(paths.aligned_srt),
-                    "final_video": str(paths.final_video),
-                    "speed_adjusted_video": str(paths.speed_adjusted_video),
-                    "pipeline_cache": str(paths.pipeline_cache),
-                },
-            }
-
-            # 检查和修复缓存
-            existing_cache = None
-            if resume_from_cache:
-                repair_result = self.check_and_repair_cache(video_path)
-                self.logger.info(f"缓存检查结果: {repair_result['message']}")
-
-                if repair_result.get("cache_exists"):
-                    existing_cache = self._load_pipeline_cache(paths.pipeline_cache)
-                    if existing_cache:
-                        cache_data = existing_cache
-                        self.logger.info("使用缓存继续处理")
-                    else:
-                        self.logger.info("缓存加载失败，开始全新处理")
-                else:
-                    self.logger.info("未找到缓存，开始全新处理")
-            else:
-                self.logger.info("禁用缓存，开始全新处理")
-
-            # 处理各个步骤
-            steps_info = [
-                ("preprocess_subtitle", self._process_preprocess_subtitle, paths),
-                ("separate_media", self._process_separate_media, paths),
-                (
-                    "generate_reference_audio",
-                    self._process_generate_reference_audio,
-                    paths,
-                ),
-                ("generate_tts", self._process_generate_tts, paths),
-                ("align_audio", self._process_align_audio, paths),
-                (
-                    "generate_aligned_srt",
-                    self._process_generate_aligned_srt,
-                    paths,
-                    video_path,
-                ),
-                ("process_video_speed", self._process_video_speed, paths),
-                ("merge_audio_video", self._process_merge_audio_video, paths),
-            ]
-
-            for step_id, process_func, *args in steps_info:
-                if not self._check_step_completed(cache_data, step_id):
-                    self.logger.info(f"开始处理步骤: {step_id}")
-                    try:
-                        if len(args) == 1:
-                            result = process_func(args[0], cache_data)
-                        else:
-                            result = process_func(args[0], args[1], cache_data)
-
-                        if not result.get("success", True):
-                            return result
-                    except Exception as e:
-                        return {
-                            "success": False,
-                            "message": f"步骤 {step_id} 失败: {str(e)}",
-                            "error": str(e),
-                        }
-                else:
-                    self.logger.info(f"步骤 {step_id} 已完成，跳过")
-
-            self.logger.info(f"处理完成！输出文件: {paths.final_video}")
-
-            # 计算完成的步骤数
-            completed_steps = sum(
-                1
-                for step in cache_data["completed_steps"].values()
-                if step.get("completed", False)
-            )
-
-            return {
-                "success": True,
-                "message": "视频配音处理完成",
-                "output_file": str(paths.final_video),
-                "output_dir": str(paths.output_dir),
-                "steps_completed": completed_steps,
-                "cache_file": str(paths.pipeline_cache),
-                "resumed_from_cache": resume_from_cache and existing_cache is not None,
-            }
-
-        except Exception as e:
-            self.logger.error(f"处理过程中发生错误: {str(e)}")
-            return {"success": False, "message": f"处理失败: {str(e)}", "error": str(e)}
-
-    def _process_preprocess_subtitle(self, paths, cache_data):
-        """处理字幕预处理步骤"""
-        result = preprocess_subtitle(str(paths.subtitle_path), str(paths.output_dir))
-        self._mark_step_completed(cache_data, "preprocess_subtitle", {"result": result})
-        self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        return result
-
-    def _process_separate_media(self, paths, cache_data):
-        """处理媒体分离步骤"""
-        self.logger.info("开始分离音视频...")
-        result = separate_media(str(paths.video_path), str(paths.media_separation_dir))
-        self._mark_step_completed(cache_data, "separate_media", {"result": result})
-        self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        return result
-
-    def _process_generate_reference_audio(self, paths, cache_data):
-        """处理生成参考音频步骤"""
-        self.logger.info("开始生成参考音频...")
-        result = generate_reference_audio(
-            str(paths.vocal_audio),
-            str(paths.processed_subtitle),
-            str(paths.reference_audio_dir),
-        )
-        self._mark_step_completed(
-            cache_data, "generate_reference_audio", {"result": result}
-        )
-        self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        return result
-
-    def _process_generate_tts(self, paths, cache_data):
-        """处理TTS生成步骤"""
-        if not paths.reference_results.exists():
-            return {
-                "success": False,
-                "message": "参考结果文件不存在",
-                "error": f"文件不存在: {paths.reference_results}",
-            }
-
-        self.logger.info("开始生成TTS音频...")
-        result = generate_tts_from_reference(
-            str(paths.reference_results), str(paths.tts_output_dir)
-        )
-
-        if not result.get("success", False):
-            return {
-                "success": False,
-                "message": "TTS生成失败",
-                "error": result.get("error", "未知错误"),
-            }
-
-        self._mark_step_completed(cache_data, "generate_tts", {"result": result})
-        self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        return result
-
-    def _process_align_audio(self, paths, cache_data):
-        """处理音频对齐步骤"""
-        self.logger.info("开始音频对齐...")
-        result = align_audio_with_subtitles(
-            tts_results_path=str(paths.tts_results),
-            srt_path=str(paths.processed_subtitle),
-            output_path=str(paths.aligned_audio),
-        )
-
-        # 保存对齐结果到JSON文件
-        result_copy = result.copy()
-        result_copy["saved_at"] = datetime.now().isoformat()
-        with open(paths.aligned_results, "w", encoding="utf-8") as f:
-            json.dump(result_copy, f, ensure_ascii=False, indent=2)
-
-        self._mark_step_completed(cache_data, "align_audio", {"result": result})
-        self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        return result
-
-    def _process_generate_aligned_srt(self, paths, video_path, cache_data):
-        """处理生成对齐字幕步骤"""
-        # 生成对齐后的SRT字幕
-        generate_aligned_srt(
-            str(paths.aligned_results),
-            str(paths.processed_subtitle),
-            str(paths.aligned_srt),
-        )
-
-        # 检查原始字幕格式
-        original_subtitle_path = str(paths.subtitle_path)
-        original_subtitle_ext = Path(original_subtitle_path).suffix.lower()
-
-        if original_subtitle_ext != ".srt":
-            self.logger.info(
-                f"检测到原始字幕格式为 {original_subtitle_ext}，正在转换..."
-            )
-
-            if original_subtitle_ext == ".ass":
-                aligned_ass_path = (
-                    paths.output_dir / f"{Path(video_path).stem}_aligned.ass"
-                )
-                sync_success = sync_srt_timestamps_to_ass(
-                    original_subtitle_path,
-                    str(paths.aligned_srt),
-                    str(aligned_ass_path),
-                )
-                if sync_success:
-                    self.logger.info(f"ASS字幕时间戳同步完成: {aligned_ass_path}")
-                else:
-                    self.logger.error("ASS字幕时间戳同步失败")
-            else:
-                aligned_subtitle_path = (
-                    paths.output_dir
-                    / f"{Path(video_path).stem}_aligned{original_subtitle_ext}"
-                )
-                convert_success = convert_subtitle(
-                    str(paths.aligned_srt), str(aligned_subtitle_path)
-                )
-                if convert_success:
-                    self.logger.info(f"字幕格式转换完成: {aligned_subtitle_path}")
-                else:
-                    self.logger.error("字幕格式转换失败")
-
-        self._mark_step_completed(cache_data, "generate_aligned_srt")
-        self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        return {"success": True}
-
-    def _process_video_speed(self, paths, cache_data):
-        """处理视频速度调整步骤"""
-        self.logger.info("开始处理视频速度调整...")
-        process_video_speed_adjustment(
-            str(paths.silent_video),
-            str(paths.processed_subtitle),
-            str(paths.aligned_srt),
-        )
-        self._mark_step_completed(cache_data, "process_video_speed")
-        self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        return {"success": True}
-
-    def _process_merge_audio_video(self, paths, cache_data):
-        """处理音视频合并步骤"""
-        self.logger.info("开始合并音视频...")
-        merge_audio_video(
-            str(paths.speed_adjusted_video),
-            str(paths.aligned_audio),
-            str(paths.final_video),
-        )
-        self._mark_step_completed(cache_data, "merge_audio_video")
-        self._save_pipeline_cache(paths.pipeline_cache, cache_data)
-        return {"success": True}
 
 
 class VideoSubtitleMatcher:
@@ -510,52 +209,6 @@ class LogHandler(logging.Handler):
         self.signal_emitter.log_message.emit(msg)
 
 
-class DubbingWorkerThread(QThread):
-    """配音处理工作线程"""
-
-    # 信号定义
-    processing_finished = Signal(bool, str, dict)  # 是否成功, 消息, 结果详情
-
-    def __init__(
-        self,
-        video_path: str,
-        subtitle_path: Optional[str] = None,
-        resume_from_cache: bool = True,
-    ):
-        super().__init__()
-        self.video_path = video_path
-        self.subtitle_path = subtitle_path
-        self.resume_from_cache = resume_from_cache
-        self.is_cancelled = False
-
-        # 创建GUI专用管道
-        self.pipeline = GUIDubbingPipeline()
-
-    def cancel(self):
-        """取消处理"""
-        self.is_cancelled = True
-
-    def run(self):
-        """执行配音处理"""
-        try:
-            if self.is_cancelled:
-                return
-
-            # 执行处理
-            result = self.pipeline.process_video_with_progress(
-                self.video_path, self.subtitle_path, self.resume_from_cache
-            )
-
-            if self.is_cancelled:
-                return
-
-            # 发送完成信号
-            self.processing_finished.emit(result["success"], result["message"], result)
-
-        except Exception as e:
-            self.processing_finished.emit(False, f"处理失败: {str(e)}", {})
-
-
 class StreamlineBatchDubbingWorkerThread(QThread):
     """流水线批量配音处理工作线程 - 使用 process_batch_streamline 方法"""
 
@@ -612,8 +265,7 @@ class DubbingGUI(QMainWindow):
         super().__init__()
         self.worker_thread = None
         self.parallel_batch_worker_thread = None
-        self.gui_pipeline = GUIDubbingPipeline()
-        self.pipeline = DubbingPipeline()
+        self.gui_pipeline = GUIStreamlinePipeline()
 
         # 连接日志信号
         self.log_message.connect(self.append_log_message)
@@ -741,16 +393,6 @@ class DubbingGUI(QMainWindow):
                 except Exception as e:
                     print(f"清理GUI流水线时出错: {e}")
             self.gui_pipeline = None
-
-        # 清理普通流水线
-        if hasattr(self, 'pipeline') and self.pipeline is not None:
-            print("清理普通流水线...")
-            if hasattr(self.pipeline, 'cleanup'):
-                try:
-                    self.pipeline.cleanup()
-                except Exception as e:
-                    print(f"清理普通流水线时出错: {e}")
-            self.pipeline = None
 
     def _cleanup_log_handlers(self):
         """清理日志处理器"""
@@ -1190,6 +832,10 @@ class DubbingGUI(QMainWindow):
         self.clear_cache_btn = QPushButton("清理缓存")
         self.clear_cache_btn.clicked.connect(self.clear_cache)
         cache_layout.addWidget(self.clear_cache_btn)
+
+        self.clear_outputs_btn = QPushButton("清理输出目录")
+        self.clear_outputs_btn.clicked.connect(self.clear_output_directories)
+        cache_layout.addWidget(self.clear_outputs_btn)
 
         self.repair_cache_btn = QPushButton("修复缓存")
         self.repair_cache_btn.clicked.connect(self.repair_cache)
@@ -2213,19 +1859,27 @@ class DubbingGUI(QMainWindow):
         self.cancel_btn.setEnabled(True)
 
         try:
-            # 创建工作线程
-            self.worker_thread = DubbingWorkerThread(
+            # 将单个视频作为批量处理（包含一个视频的列表）
+            video_subtitle_pairs = [(
                 self.current_video_path,
-                self.current_subtitle_path if self.current_subtitle_path else None,
-                True,  # 默认从缓存恢复
+                self.current_subtitle_path if self.current_subtitle_path else None
+            )]
+            
+            # 创建批量处理工作线程
+            self.worker_thread = StreamlineBatchDubbingWorkerThread(
+                video_subtitle_pairs,
+                True  # 默认从缓存恢复
             )
 
             # 连接信号
-            self.worker_thread.processing_finished.connect(self.processing_finished)
-
-            # 连接GUI管道的信号
-            self.gui_pipeline = self.worker_thread.pipeline
-            self.gui_pipeline.log_message.connect(self.append_log_message)
+            self.worker_thread.batch_finished.connect(self.single_processing_finished)
+            self.worker_thread.progress_update.connect(self.update_single_progress)
+            
+            # 显示批量进度组件（用于单个视频处理的进度显示）
+            self.batch_progress_group.show()
+            self.batch_progress_bar.setMaximum(1)
+            self.batch_progress_bar.setValue(0)
+            self.current_file_label.setText(f"当前处理文件: {Path(self.current_video_path).name}")
 
             # 启动线程
             self.worker_thread.start()
@@ -2384,6 +2038,47 @@ class DubbingGUI(QMainWindow):
         else:
             QMessageBox.critical(self, "失败", message)
 
+    def single_processing_finished(self, success: bool, message: str, result: Dict[str, Any]):
+        """单文件处理完成（通过批量处理线程）"""
+        # 隐藏批量进度组件
+        self.batch_progress_group.hide()
+        
+        # 更新UI状态
+        self.start_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+
+        if success and result.get('results'):
+            # 从批量处理结果中提取第一个（也是唯一的）结果
+            first_result = result['results'][0]
+            
+            if first_result.get('success'):
+                # 显示结果信息
+                result_info = f"""处理完成！
+
+输出信息:
+• 输出文件: {first_result.get('output_file', '未知')}
+• 输出目录: {first_result.get('output_dir', '未知')}
+• 处理时间: {first_result.get('processing_time', 0):.2f} 秒
+• 完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+您的配音视频已准备就绪！
+"""
+                self.result_text.setText(result_info)
+                QMessageBox.information(self, "成功", "视频处理完成！")
+            else:
+                error_msg = first_result.get('error', '处理失败')
+                self.result_text.setText(f"处理失败: {error_msg}")
+                QMessageBox.critical(self, "失败", error_msg)
+        else:
+            error_msg = result.get('error', message)
+            self.result_text.setText(f"处理失败: {error_msg}")
+            QMessageBox.critical(self, "失败", error_msg)
+
+    def update_single_progress(self, current: int, total: int, filename: str):
+        """更新单文件处理进度"""
+        self.batch_progress_bar.setValue(current)
+        self.current_file_label.setText(f"当前处理文件: {Path(filename).name}")
+
     def show_cache_info(self):
         """显示缓存信息"""
         if self.current_mode == "single":
@@ -2478,6 +2173,93 @@ class DubbingGUI(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "错误", f"修复缓存失败: {str(e)}")
+
+    def clear_output_directories(self):
+        """清理重复的输出目录"""
+        reply = QMessageBox.question(
+            self,
+            "确认清理",
+            "确定要清理重复的输出目录吗？\n\n此操作将：\n• 分析现有输出目录\n• 识别并删除重复目录\n• 保留最新的处理结果\n\n建议先备份重要数据！",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                from pathlib import Path
+                import shutil
+                import re
+                from datetime import datetime
+                
+                # 查找可能的outputs目录
+                current_dir = Path.cwd()
+                outputs_dirs = []
+                
+                # 在当前目录和父目录中查找outputs目录
+                for search_dir in [current_dir, current_dir.parent]:
+                    potential_outputs = search_dir / "outputs"
+                    if potential_outputs.exists() and potential_outputs.is_dir():
+                        outputs_dirs.append(potential_outputs)
+                
+                if not outputs_dirs:
+                    QMessageBox.information(self, "信息", "未找到输出目录")
+                    return
+                
+                # 分析和清理每个outputs目录
+                total_cleaned = 0
+                cleanup_log = []
+                
+                for outputs_dir in outputs_dirs:
+                    # 获取所有子目录
+                    subdirs = [d for d in outputs_dir.iterdir() if d.is_dir()]
+                    
+                    if not subdirs:
+                        continue
+                    
+                    # 按照统一的文件名清理逻辑分组
+                    def _sanitize_filename(filename: str) -> str:
+                        sanitized = re.sub(r'[<>:"/\\\\|?*]', '_', filename)
+                        sanitized = re.sub(r'[@#&%=+]', '_', sanitized)
+                        sanitized = re.sub(r'[.\\-\\s]', '_', sanitized)
+                        sanitized = re.sub(r'_+', '_', sanitized)
+                        sanitized = sanitized.strip('_')
+                        if not sanitized:
+                            sanitized = 'unnamed'
+                        return sanitized
+                    
+                    # 将目录按照清理后的名称分组
+                    grouped_dirs = {}
+                    for subdir in subdirs:
+                        clean_name = _sanitize_filename(subdir.name)
+                        if clean_name not in grouped_dirs:
+                            grouped_dirs[clean_name] = []
+                        grouped_dirs[clean_name].append(subdir)
+                    
+                    # 清理重复目录
+                    for clean_name, dirs in grouped_dirs.items():
+                        if len(dirs) > 1:
+                            # 按修改时间排序，保留最新的
+                            dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+                            keep_dir = dirs[0]
+                            
+                            for remove_dir in dirs[1:]:
+                                try:
+                                    shutil.rmtree(remove_dir)
+                                    cleanup_log.append(f"删除: {remove_dir.name}")
+                                    total_cleaned += 1
+                                except Exception as e:
+                                    cleanup_log.append(f"删除失败 {remove_dir.name}: {e}")
+                            
+                            cleanup_log.append(f"保留: {keep_dir.name} (最新)")
+                
+                # 显示清理结果
+                if total_cleaned > 0:
+                    result_msg = f"清理完成！删除了 {total_cleaned} 个重复目录。\\n\\n详细信息:\\n" + "\\n".join(cleanup_log[-10:])  # 只显示最后10条
+                    QMessageBox.information(self, "清理完成", result_msg)
+                else:
+                    QMessageBox.information(self, "清理完成", "未发现重复的输出目录")
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"清理输出目录失败: {str(e)}")
 
     def _initialize_tts_processor(self, api_url: str):
         """初始化TTS处理器"""

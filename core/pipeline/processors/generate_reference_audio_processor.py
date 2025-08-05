@@ -6,9 +6,9 @@
 
 from pathlib import Path
 
-from ...media_processor import generate_reference_audio
+from .media_processor import generate_reference_audio_core
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task
+from ..task import ProcessResult, Task, StepProgressDetail
 
 
 class GenerateReferenceAudioProcessor(StepProcessor):
@@ -22,7 +22,7 @@ class GenerateReferenceAudioProcessor(StepProcessor):
             max_retries=2,
         )
 
-    def _execute_process(self, task: Task) -> ProcessResult:
+    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
         """执行生成参考音频"""
         try:
             # 验证依赖文件
@@ -59,7 +59,7 @@ class GenerateReferenceAudioProcessor(StepProcessor):
             self.logger.info(f"开始生成参考音频: {vocal_audio_path}")
 
             # 调用生成参考音频功能
-            result = generate_reference_audio(
+            result = generate_reference_audio_core(
                 vocal_audio_path, processed_subtitle_path, str(reference_audio_dir)
             )
 

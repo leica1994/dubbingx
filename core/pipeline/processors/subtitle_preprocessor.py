@@ -1,6 +1,6 @@
 """
-字幕预处理器
-专注于核心功能：根据字幕路径预处理字幕
+字幕预处理核心功能
+优化版本 - 集成到流水线系统中
 """
 
 import logging
@@ -9,22 +9,22 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .subtitle.subtitle_entry import SubtitleEntry
-from .subtitle.subtitle_processor import (
+from ...subtitle.subtitle_entry import SubtitleEntry
+from ...subtitle.subtitle_processor import (
     TextUtils,
     convert_subtitle,
     extract_ass_to_srt,
     format_ass_file,
 )
-from .subtitle.text_processor import (
+from ...subtitle.text_processor import (
     IntelligentTextProcessor,
     SplitStrategy,
     quick_clean_text,
 )
 
 
-class SubtitlePreprocessor:
-    """字幕预处理器，专注于字幕预处理和清理"""
+class SubtitlePreprocessorCore:
+    """字幕预处理核心类，专注于字幕预处理和清理"""
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ class SubtitlePreprocessor:
                 "total_entries": total_entries,
                 "total_duration": total_duration,
                 "format": "srt",
-                "text_processing_stats": self.text_processor.get_processing_statistics(),  # 添加文本处理统计
+                "text_processing_stats": self.text_processor.get_processing_statistics(),
             }
 
         except Exception as e:
@@ -182,13 +182,13 @@ class SubtitlePreprocessor:
 
                 # 合并文本行并使用智能处理器清理
                 text = "\n".join(lines[2:])
-                text = quick_clean_text(text)  # 使用智能文本处理器进行快速清理
+                text = quick_clean_text(text)
 
                 # 创建字幕条目（包括空文本条目，保持索引连续性）
                 entry = SubtitleEntry(
                     start_time=start_time,
                     end_time=end_time,
-                    text=text,  # 可能为空字符串
+                    text=text,
                     style="Default",
                 )
                 entries.append(entry)
@@ -210,28 +210,14 @@ class SubtitlePreprocessor:
                 self.logger.warning(f"跳过无效时间戳的字幕: {entry.text[:20]}...")
                 continue
 
-            final_text = ""  # 默认为空文本
+            final_text = ""
 
             # 只有当原文本不为空时，才进行AI处理
             if entry.text and entry.text.strip():
-                # 调试信息：显示处理前的文本
-                self.logger.debug(f"处理前文本: '{entry.text}'")
-
                 # 使用智能文本处理器进行深度清理
                 processing_result = self.text_processor.process(
                     entry.text,
-                    split_strategy=SplitStrategy.SENTENCE,  # 按句子分割，适合字幕
-                )
-
-                # 调试信息：显示处理结果
-                self.logger.debug(
-                    f"AI处理结果 - is_valid: {processing_result.is_valid}"
-                )
-                self.logger.debug(
-                    f"AI处理结果 - cleaned_text: '{processing_result.cleaned_text}'"
-                )
-                self.logger.debug(
-                    f"AI处理结果 - segments: {processing_result.segments}"
+                    split_strategy=SplitStrategy.SENTENCE,
                 )
 
                 # 检查处理结果
@@ -239,44 +225,29 @@ class SubtitlePreprocessor:
                     processing_result.is_valid
                     and processing_result.cleaned_text.strip()
                 ):
-                    # 如果文本被分割成多个片段，只取第一个片段（保持字幕完整性）
+                    # 如果文本被分割成多个片段，只取第一个片段
                     final_text = (
                         processing_result.segments[0]
                         if processing_result.segments
                         else processing_result.cleaned_text
                     )
                     final_text = final_text.strip()
-                    self.logger.debug(f"AI处理后最终文本: '{final_text}'")
                 else:
                     # AI处理无效或为空，手动检查是否为纯括号内容
                     if self._is_pure_bracket_content(entry.text):
                         final_text = ""
-                        self.logger.debug(
-                            f"检测到纯括号内容，设为空: '{entry.text}' -> '{final_text}'"
-                        )
                     else:
                         final_text = ""
-                        self.logger.debug(
-                            f"AI处理后文本为空: '{entry.text}' -> '{final_text}'"
-                        )
-            else:
-                self.logger.debug(
-                    f"保留空文本字幕条目，索引位置: {len(cleaned_entries) + 1}"
-                )
 
             # 创建清理后的条目（包括空文本条目，保持索引连续性）
             cleaned_entry = SubtitleEntry(
                 start_time=entry.start_time,
                 end_time=entry.end_time,
-                text=final_text,  # 可能为空字符串
+                text=final_text,
                 style=entry.style,
                 actor=entry.actor,
             )
             cleaned_entries.append(cleaned_entry)
-
-            # 调试信息：显示处理前后的文本变化
-            if entry.text.strip() != final_text.strip():
-                self.logger.debug(f"文本变化: '{entry.text}' -> '{final_text}'")
 
         # 按时间排序
         cleaned_entries.sort(key=lambda x: x.start_time_seconds())
@@ -292,45 +263,19 @@ class SubtitlePreprocessor:
 
         # 检查是否完全被各种括号包围
         bracket_patterns = [
-            (r"^\([^)]*\)$", "圆括号"),  # (内容)
-            (r"^\[[^\]]*\]$", "方括号"),  # [内容]
-            (r"^\{[^}]*\}$", "花括号"),  # {内容}
-            (r"^<[^>]*>$", "尖括号"),  # <内容>
-            (r"^（[^）]*）$", "中文圆括号"),  # （内容）
-            (r"^【[^】]*】$", "中文方括号"),  # 【内容】
+            (r"^\([^)]*\)$", "圆括号"),
+            (r"^\[[^\]]*\]$", "方括号"),
+            (r"^\{[^}]*\}$", "花括号"),
+            (r"^<[^>]*>$", "尖括号"),
+            (r"^（[^）]*）$", "中文圆括号"),
+            (r"^【[^】]*】$", "中文方括号"),
         ]
 
         for pattern, bracket_type in bracket_patterns:
             if re.match(pattern, text):
-                self.logger.debug(f"检测到{bracket_type}包围的纯括号内容: '{text}'")
                 return True
 
         return False
-
-    @staticmethod
-    def _clean_text_content(text: str) -> str:
-        """清理文本内容"""
-        if not text:
-            return ""
-
-        # 移除HTML标签
-        text = re.sub(r"<[^>]*>", "", text)
-
-        # 移除ASS样式标签
-        text = TextUtils.clean_ass_text(text)
-
-        # 移除多余的空白字符
-        text = re.sub(r"\s+", " ", text)
-        text = text.strip()
-
-        # 移除特殊字符（保留中文、英文、数字、基本标点）
-        text = re.sub(
-            r"[^\w\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef.,!?;:\'\"()-]",
-            "",
-            text,
-        )
-
-        return text
 
     def _write_srt_file(self, srt_path: str, entries: List[SubtitleEntry]):
         """写入SRT文件"""
@@ -369,49 +314,27 @@ class SubtitlePreprocessor:
 _processor_instance = None
 
 
-def get_subtitle_preprocessor() -> SubtitlePreprocessor:
+def get_subtitle_preprocessor_core() -> SubtitlePreprocessorCore:
     global _processor_instance
     if _processor_instance is None:
-        _processor_instance = SubtitlePreprocessor()
+        _processor_instance = SubtitlePreprocessorCore()
     return _processor_instance
 
 
-def preprocess_subtitle(
+def preprocess_subtitle_core(
     subtitle_path: str, output_dir: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    预处理字幕文件的便捷函数
-
-    根据字幕路径预处理字幕，支持多种格式转换和智能文本清理
+    预处理字幕文件的核心函数
 
     Args:
-        subtitle_path: 字幕文件路径（支持.srt、.ass等格式）
+        subtitle_path: 字幕文件路径
         output_dir: 输出目录，默认为字幕文件所在目录
 
     Returns:
-        Dict[str, Any]: 处理结果，包含：
-            - success: bool - 处理是否成功
-            - processed_subtitle_path: str - 预处理后的字幕文件路径
-            - subtitle_entries: List[SubtitleEntry] - 字幕条目列表
-            - total_entries: int - 字幕条目总数
-            - total_duration: float - 字幕总时长（秒）
-            - format: str - 字幕格式
-            - text_processing_stats: Dict[str, Any] - 文本处理统计信息
-            - error: str - 错误信息（如果有）
-
-    Example:
-        >>> result = preprocess_subtitle(
-        ...     subtitle_path="input/subtitle.ass",
-        ...     output_dir="output/processed"
-        ... )
-        >>> if result['success']:
-        ...     print(f"预处理完成: {result['processed_subtitle_path']}")
-        ...     print(f"字幕条目数: {result['total_entries']}")
-        ...     print(f"总时长: {result['total_duration']:.1f}秒")
-        ... else:
-        ...     print(f"处理失败: {result['error']}")
+        Dict[str, Any]: 处理结果
     """
-    return get_subtitle_preprocessor().preprocess_subtitle(
+    return get_subtitle_preprocessor_core().preprocess_subtitle(
         subtitle_path=subtitle_path,
         output_dir=output_dir,
     )
