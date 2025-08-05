@@ -18,7 +18,7 @@ class GenerateReferenceAudioProcessor(StepProcessor):
         super().__init__(
             step_id=2,
             step_name="generate_reference_audio",
-            timeout=300.0,  # 5分钟超时
+            timeout=None,  # 移除超时限制，支持长视频处理
             max_retries=2,
         )
 

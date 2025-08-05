@@ -19,7 +19,7 @@ class GenerateAlignedSrtProcessor(StepProcessor):
         super().__init__(
             step_id=5,
             step_name="generate_aligned_srt",
-            timeout=120.0,  # 2分钟超时
+            timeout=None,  # 移除超时限制，支持长视频处理
             max_retries=2,
         )
 

@@ -18,7 +18,7 @@ class MergeAudioVideoProcessor(StepProcessor):
         super().__init__(
             step_id=7,
             step_name="merge_audio_video",
-            timeout=600.0,  # 10分钟超时
+            timeout=None,  # 移除超时限制，支持长视频处理
             max_retries=2,
         )
 

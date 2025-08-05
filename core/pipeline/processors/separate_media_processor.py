@@ -19,7 +19,7 @@ class SeparateMediaProcessor(StepProcessor):
         super().__init__(
             step_id=1,
             step_name="separate_media",
-            timeout=600.0,  # 10分钟超时
+            timeout=None,  # 移除超时限制，支持长视频处理
             max_retries=2,
         )
 

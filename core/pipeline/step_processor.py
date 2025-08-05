@@ -84,12 +84,16 @@ class StepProcessor(ABC):
                 # 步骤之前中断了，需要从中断处继续
                 self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 从中断处继续执行")
                 step_detail.status = StepStatus.PROCESSING
+                # 发送处理中状态
+                self._notify_status_change(task, "processing", "从中断处继续执行")
                 result = self._resume_from_interruption(task, step_detail)
             else:
                 # 步骤未进行，从头开始
                 self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 开始执行")
                 step_detail.status = StepStatus.PROCESSING
                 task.update_status(TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}")
+                # 发送处理中状态
+                self._notify_status_change(task, "processing", f"开始执行步骤: {self.step_name}")
                 result = self._execute_process(task, step_detail)
 
             # 记录处理时间
@@ -103,6 +107,8 @@ class StepProcessor(ABC):
             # 根据结果更新步骤状态
             if result.success:
                 step_detail.status = StepStatus.COMPLETED
+                # 发送完成状态
+                self._notify_status_change(task, "completed", f"步骤 {self.step_name} 处理成功")
                 self.logger.info(
                     f"任务 {task.task_id} 步骤 {self.step_name} 处理成功 "
                     f"(耗时: {processing_time:.2f}s)"
@@ -115,6 +121,8 @@ class StepProcessor(ABC):
                 )
             else:
                 step_detail.status = StepStatus.FAILED
+                # 发送失败状态
+                self._notify_status_change(task, "failed", f"步骤 {self.step_name} 处理失败: {result.error}")
                 self.logger.error(
                     f"任务 {task.task_id} 步骤 {self.step_name} 处理失败: {result.error}"
                 )
@@ -230,6 +238,14 @@ class StepProcessor(ABC):
             # 只保留最近1000条记录
             if len(self._processing_times) > 1000:
                 self._processing_times = self._processing_times[-1000:]
+
+    def _notify_status_change(self, task: Task, status: str, message: str = "") -> None:
+        """通知流水线状态变化"""
+        try:
+            if hasattr(task, 'pipeline_ref') and task.pipeline_ref:
+                task.pipeline_ref.notify_step_status(task.task_id, self.step_id, status, message)
+        except Exception as e:
+            self.logger.debug(f"通知状态变化失败: {e}")  # 使用debug级别，避免干扰主要日志
 
     def get_next_step_id(self) -> Optional[int]:
         """获取下一个步骤ID"""

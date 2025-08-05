@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from PySide6.QtCore import QObject, Signal
 from core.util import sanitize_filename
 
 
@@ -252,11 +253,14 @@ class DubbingPaths:
         return self._pipeline_cache
 
 
-class StreamlinePipeline:
+class StreamlinePipeline(QObject):
     """基于队列+监听模式的流水线处理器
     
     实现真正的流水线并行处理，支持不同任务在不同步骤同时执行
     """
+    
+    # 添加状态更新信号
+    step_status_changed = Signal(str, int, str, str)  # task_id, step_id, status, message
     
     def __init__(self, output_dir: Optional[str] = None):
         """
@@ -265,6 +269,7 @@ class StreamlinePipeline:
         Args:
             output_dir: 输出目录路径
         """
+        super().__init__()  # 初始化QObject
         self.logger = logging.getLogger(__name__)
         self.output_dir = Path(output_dir) if output_dir else None
         
@@ -305,6 +310,21 @@ class StreamlinePipeline:
         
         self.logger.info("StreamlinePipeline 初始化完成")
     
+    def notify_step_status(self, task_id: str, step_id: int, status: str, message: str = ""):
+        """通知步骤状态变化
+        
+        Args:
+            task_id: 任务ID
+            step_id: 步骤ID (0-7)
+            status: 状态 ('processing', 'completed', 'failed')
+            message: 状态消息
+        """
+        try:
+            self.step_status_changed.emit(task_id, step_id, status, message)
+        except Exception as e:
+            self.logger.error(f"发送状态信号失败: {e}")
+    
+    
     def process_batch_streamline(
         self, 
         video_subtitle_pairs: List[Tuple[str, Optional[str]]],
@@ -342,6 +362,8 @@ class StreamlinePipeline:
                     self.logger.info(f"从缓存恢复任务: {task_id}")
                     # 更新任务ID以保持一致性
                     task.task_id = task_id
+                    # 为恢复的任务建立引用关系
+                    task.pipeline_ref = self
                 else:
                     self.logger.info(f"未找到有效缓存，创建新任务: {task_id}")
             
@@ -352,6 +374,9 @@ class StreamlinePipeline:
                     video_path=video_path,
                     subtitle_path=subtitle_path
                 )
+            
+            # 建立反向引用，让任务能通知流水线
+            task.pipeline_ref = self
             
             # 设置或更新路径信息
             task.paths = {
@@ -401,10 +426,10 @@ class StreamlinePipeline:
                 
                 # 等待所有任务完成
                 self.logger.info("等待所有任务完成...")
-                completed = self.task_scheduler.wait_for_completion(timeout=3600)  # 1小时超时
+                completed = self.task_scheduler.wait_for_completion(timeout=None)  # 无超时限制
                 
                 if not completed:
-                    self.logger.warning("部分任务未在超时时间内完成")
+                    self.logger.warning("任务处理被中断或出现异常")
                 
                 # 收集结果
                 all_tasks_status = self.task_scheduler.get_all_tasks_status()

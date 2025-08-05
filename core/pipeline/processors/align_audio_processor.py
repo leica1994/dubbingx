@@ -20,7 +20,7 @@ class AlignAudioProcessor(StepProcessor):
         super().__init__(
             step_id=4,
             step_name="align_audio",
-            timeout=300.0,  # 5分钟超时
+            timeout=None,  # 移除超时限制，支持长视频处理
             max_retries=2,
         )
 

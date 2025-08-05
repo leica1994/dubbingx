@@ -18,7 +18,7 @@ class GenerateTTSProcessor(StepProcessor):
         super().__init__(
             step_id=3,
             step_name="generate_tts",
-            timeout=900.0,  # 15分钟超时
+            timeout=None,  # 移除超时限制，支持长视频处理
             max_retries=3,
         )
 

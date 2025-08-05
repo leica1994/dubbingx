@@ -19,7 +19,7 @@ class PreprocessSubtitleProcessor(StepProcessor):
         super().__init__(
             step_id=0,
             step_name="preprocess_subtitle",
-            timeout=300.0,
+            timeout=None,  # 移除超时限制，支持长视频处理
             max_retries=3,
         )
 
