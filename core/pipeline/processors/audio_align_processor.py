@@ -1490,6 +1490,15 @@ class AudioAlignProcessorCore:
                         continue
 
                     speed_ratio = segment.get("speed_ratio", 1.0)
+                    
+                    # 安全检查：防止除零错误
+                    if speed_ratio <= 0:
+                        self.logger.warning(
+                            f"片段 {segment['index']} 的速度比例无效 ({speed_ratio})，跳过变速处理"
+                        )
+                        processed_segments.append(segment)
+                        success_count += 1
+                        continue
 
                     if speed_ratio != 1.0:
                         compensation_factor = 0.99
@@ -1647,9 +1656,25 @@ class AudioAlignProcessorCore:
             # 使用临时目录处理拼接
             with tempfile.TemporaryDirectory() as temp_dir:
                 list_file_path = Path(temp_dir) / "concat_list.txt"
+                
+                # 验证所有片段文件的有效性
+                valid_for_concat = []
+                for segment in valid_segments:
+                    file_path = segment['file_path']
+                    if self._validate_video_file(file_path):
+                        valid_for_concat.append(segment)
+                    else:
+                        self.logger.warning(f"片段文件无效，跳过: {file_path}")
+                
+                if not valid_for_concat:
+                    return {"success": False, "error": "没有有效的视频片段可供拼接"}
+                
+                # 生成拼接列表文件
                 with open(list_file_path, "w", encoding="utf-8") as f:
-                    for segment in valid_segments:
+                    for segment in valid_for_concat:
                         f.write(f"file '{segment['file_path']}'\n")
+                
+                self.logger.info(f"准备拼接 {len(valid_for_concat)} 个有效视频片段")
 
                 gpu_params = self._detect_gpu_acceleration()
 
@@ -1787,6 +1812,27 @@ class AudioAlignProcessorCore:
         except Exception as e:
             self.logger.error(f"获取实际视频时长失败: {str(e)}")
             return 0.0
+
+    def _validate_video_file(self, file_path: str) -> bool:
+        """验证视频文件是否有效且包含视频流"""
+        try:
+            if not os.path.exists(file_path):
+                return False
+            
+            # 使用ffprobe检查文件是否包含有效的视频流
+            cmd = [
+                "ffprobe", "-v", "quiet", "-select_streams", "v:0", 
+                "-show_entries", "stream=codec_type", "-of", "csv=p=0", file_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+            
+            # 如果返回"video"，说明文件包含视频流
+            return result.returncode == 0 and "video" in result.stdout.strip()
+            
+        except Exception as e:
+            self.logger.warning(f"验证视频文件失败 {file_path}: {e}")
+            return False
 
     def _detect_gpu_acceleration(self) -> Optional[Dict[str, List[str]]]:
         """检测可用的GPU硬件加速选项"""

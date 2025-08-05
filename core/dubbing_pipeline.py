@@ -361,6 +361,7 @@ class StreamlinePipeline:
                 "vocal_audio": str(paths.vocal_audio),
                 "background_audio": str(paths.background_audio),
                 "silent_video": str(paths.silent_video),
+                "output_dir": str(paths.output_dir),  # 添加缺少的output_dir
                 "media_separation_dir": str(paths.media_separation_dir),
                 "reference_audio_dir": str(paths.reference_audio_dir),
                 "tts_output_dir": str(paths.tts_output_dir),

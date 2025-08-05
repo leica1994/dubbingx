@@ -35,7 +35,7 @@ class GenerateTTSProcessor(StepProcessor):
                 )
 
             reference_results = task.paths.get("reference_results")
-            output_dir = task.paths.get("output_dir")
+            output_dir = task.paths.get("output_dir") or task.paths.get("tts_output_dir")
 
             if not reference_results or not Path(reference_results).exists():
                 return ProcessResult(
@@ -49,7 +49,7 @@ class GenerateTTSProcessor(StepProcessor):
                 return ProcessResult(
                     success=False,
                     message="输出目录未指定",
-                    error="output_dir 为空",
+                    error=f"output_dir 为空，可用路径: {list(task.paths.keys())}",
                     step_detail=step_detail
                 )
 

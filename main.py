@@ -48,6 +48,10 @@ class GUIStreamlinePipeline(QObject, StreamlinePipeline):
         QObject.__init__(self)
         StreamlinePipeline.__init__(self, output_dir)
 
+        # 确保logger存在（从StreamlinePipeline继承）
+        if not hasattr(self, 'logger'):
+            self.logger = logging.getLogger(__name__)
+
         # 设置日志处理器
         self.setup_logging()
 
@@ -286,6 +290,9 @@ class DubbingGUI(QMainWindow):
 
         # 设置日志
         self.setup_logging()
+        
+        # 初始化logger
+        self.logger = logging.getLogger(__name__)
 
         # 状态变量
         self.current_mode = "single"  # "single" 或 "batch"
@@ -1670,6 +1677,9 @@ class DubbingGUI(QMainWindow):
                 step_item.setText("❌")  # 失败
                 step_item.setForeground(QColor("#dc3545"))  # 红色
                 tooltip = f"步骤{step_id + 1}: 失败"
+                
+                # 当步骤失败时，将后续步骤重置为未开始状态
+                self._reset_subsequent_steps(task_row, step_id)
             else:
                 step_item.setText("⏸️")  # 未开始
                 step_item.setForeground(QColor("#6c757d"))  # 灰色
@@ -1686,6 +1696,37 @@ class DubbingGUI(QMainWindow):
             
         except Exception as e:
             self.logger.error(f"更新任务步骤状态失败: {e}")
+    
+    def _reset_subsequent_steps(self, task_row: int, failed_step_id: int):
+        """
+        重置失败步骤之后的所有步骤为未开始状态
+        
+        Args:
+            task_row: 任务在表格中的行索引
+            failed_step_id: 失败的步骤ID
+        """
+        try:
+            step_names = [
+                "字幕预处理", "媒体分离", "参考音频", "TTS生成",
+                "音频对齐", "对齐字幕", "视频调速", "合并输出"
+            ]
+            
+            # 重置失败步骤之后的所有步骤
+            for step_id in range(failed_step_id + 1, 8):
+                step_col = 1 + step_id
+                step_item = self.status_table.item(task_row, step_col)
+                
+                if not step_item:
+                    step_item = QTableWidgetItem()
+                    self.status_table.setItem(task_row, step_col, step_item)
+                
+                step_item.setText("⏸️")  # 未开始
+                step_item.setForeground(QColor("#6c757d"))  # 灰色
+                step_item.setToolTip(f"步骤{step_id + 1}: {step_names[step_id]} - 未开始")
+                step_item.setTextAlignment(Qt.AlignCenter)
+                
+        except Exception as e:
+            self.logger.error(f"重置后续步骤状态失败: {e}")
     
     def update_overall_task_status(self, row: int):
         """更新任务的整体状态"""
@@ -1752,7 +1793,7 @@ class DubbingGUI(QMainWindow):
             self.logger.error(f"更新整体任务状态失败: {e}")
 
     def initialize_status_table(self, video_subtitle_pairs: List[Tuple[str, str]]):
-        """初始化处理状态表格"""
+        """初始化处理状态表格，加载已有缓存状态"""
         try:
             self.status_table.setRowCount(len(video_subtitle_pairs))
 
@@ -1763,32 +1804,126 @@ class DubbingGUI(QMainWindow):
                 video_item.setToolTip(video_path)
                 self.status_table.setItem(i, 0, video_item)
 
-                # 初始化8个步骤状态列（列索引 1-8）
+                # 步骤名称
                 step_names = [
                     "字幕预处理", "媒体分离", "参考音频", "TTS生成",
                     "音频对齐", "对齐字幕", "视频调速", "合并输出"
                 ]
                 
+                # 尝试加载缓存状态
+                cached_status = self._load_cached_task_status(video_path)
+                
+                # 初始化8个步骤状态列（列索引 1-8）
                 for step_idx in range(8):
-                    step_item = QTableWidgetItem("⏸️")  # 暂停符号表示未开始
-                    step_item.setToolTip(f"步骤{step_idx + 1}: {step_names[step_idx]} - 未开始")
+                    if cached_status and step_idx in cached_status:
+                        # 从缓存恢复状态
+                        step_status = cached_status[step_idx]
+                        if step_status == "completed":
+                            step_item = QTableWidgetItem("✅")
+                            step_item.setForeground(QColor("#198754"))  # 绿色
+                            tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 已完成"
+                        elif step_status == "failed":
+                            step_item = QTableWidgetItem("❌")
+                            step_item.setForeground(QColor("#dc3545"))  # 红色
+                            tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 失败"
+                        elif step_status == "processing":
+                            step_item = QTableWidgetItem("🔄")
+                            step_item.setForeground(QColor("#fd7e14"))  # 橙色
+                            tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 处理中"
+                        else:
+                            step_item = QTableWidgetItem("⏸️")
+                            step_item.setForeground(QColor("#6c757d"))  # 灰色
+                            tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 未开始"
+                    else:
+                        # 默认未开始状态
+                        step_item = QTableWidgetItem("⏸️")
+                        step_item.setForeground(QColor("#6c757d"))  # 灰色
+                        tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 未开始"
+                    
+                    step_item.setToolTip(tooltip)
                     step_item.setTextAlignment(Qt.AlignCenter)
-                    step_item.setForeground(QColor("#6c757d"))  # 灰色
                     self.status_table.setItem(i, 1 + step_idx, step_item)
 
-                # 整体状态（列索引 9）
-                status_item = QTableWidgetItem("就绪")
-                status_item.setForeground(QColor("#198754"))  # 绿色
-                self.status_table.setItem(i, 9, status_item)
-
-                # 进度（列索引 10）
-                progress_item = QTableWidgetItem("0/8")
-                progress_item.setTextAlignment(Qt.AlignCenter)
-                progress_item.setForeground(QColor("#6c757d"))  # 灰色
-                self.status_table.setItem(i, 10, progress_item)
+                # 更新整体状态
+                self.update_overall_task_status(i)
                 
         except Exception as e:
             self.logger.error(f"初始化状态表格失败: {e}")
+
+    def _load_cached_task_status(self, video_path: str) -> Optional[Dict[int, str]]:
+        """
+        加载缓存中的任务状态
+        
+        Args:
+            video_path: 视频文件路径
+            
+        Returns:
+            步骤状态字典 {step_id: status} 或 None
+        """
+        try:
+            from core.cache import TaskCacheManager
+            from core.util import sanitize_filename
+            
+            # 构建缓存文件路径 - 需要与pipeline中的路径一致
+            video_path_obj = Path(video_path)
+            clean_name = sanitize_filename(video_path_obj.stem)
+            output_dir = video_path_obj.parent / "outputs" / clean_name
+            
+            # 使用pipeline_cache命名规则
+            cache_file = output_dir / f"{video_path_obj.stem}_pipeline_cache.json"
+            
+            self.logger.debug(f"尝试加载缓存文件: {cache_file}")
+            
+            if not cache_file.exists():
+                self.logger.debug(f"缓存文件不存在: {cache_file}")
+                return None
+            
+            # 加载缓存
+            cache_manager = TaskCacheManager()
+            cache_data = cache_manager.load_task_cache(cache_file, video_path)
+            
+            if not cache_data:
+                self.logger.debug("缓存数据为空")
+                return None
+            
+            task_data = cache_data.get("task", {})
+            step_details = task_data.get("step_details", {})
+            step_results = task_data.get("step_results", {})
+            
+            self.logger.debug(f"加载的步骤详情: {list(step_details.keys())}")
+            self.logger.debug(f"加载的步骤结果: {list(step_results.keys())}")
+            
+            # 转换为GUI需要的格式
+            status_map = {}
+            
+            # 首先从step_results获取状态
+            for step_id_str, result in step_results.items():
+                try:
+                    step_id = int(step_id_str)
+                    if result.get("success", False):
+                        status_map[step_id] = "completed"
+                    elif result.get("partial_success", False):
+                        status_map[step_id] = "failed"  # 部分成功视为失败
+                    else:
+                        status_map[step_id] = "failed"
+                except (ValueError, TypeError):
+                    continue
+            
+            # 然后从step_details获取状态，覆盖step_results的状态
+            for step_id_str, detail in step_details.items():
+                try:
+                    step_id = int(step_id_str)
+                    status = detail.get("status", "pending")
+                    status_map[step_id] = status
+                except (ValueError, TypeError):
+                    continue
+            
+            self.logger.debug(f"最终状态映射: {status_map}")
+            return status_map if status_map else None
+            
+        except Exception as e:
+            self.logger.debug(f"加载缓存状态失败: {e}")
+            return None
 
     def select_all_files(self):
         """全选文件"""
@@ -1833,76 +1968,37 @@ class DubbingGUI(QMainWindow):
                 return
 
     def start_processing(self):
-        """开始处理"""
+        """开始处理 - 统一的入口方法"""
         if self.current_mode == "single":
-            self.start_single_processing()
-        else:
-            self.start_batch_processing()
+            # 单文件模式：将单个文件转换为批量处理格式
+            if not self.current_video_path:
+                QMessageBox.warning(self, "警告", "请选择视频文件！")
+                return
 
-    def start_single_processing(self):
-        """开始单文件处理"""
-        # 验证输入
-        if not self.current_video_path:
-            QMessageBox.warning(self, "警告", "请选择视频文件！")
-            return
+            if not Path(self.current_video_path).exists():
+                QMessageBox.warning(self, "警告", "视频文件不存在！")
+                return
 
-        if not Path(self.current_video_path).exists():
-            QMessageBox.warning(self, "警告", "视频文件不存在！")
-            return
-
-        # 初始化TTS处理器
-        api_url = self.api_url_edit.text().strip() or "http://127.0.0.1:7860"
-        self._initialize_tts_processor(api_url)
-
-        # 更新UI状态
-        self.start_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(True)
-
-        try:
-            # 将单个视频作为批量处理（包含一个视频的列表）
+            # 转换为批量处理格式（包含一个文件的列表）
             video_subtitle_pairs = [(
                 self.current_video_path,
                 self.current_subtitle_path if self.current_subtitle_path else None
             )]
             
-            # 创建批量处理工作线程
-            self.worker_thread = StreamlineBatchDubbingWorkerThread(
-                video_subtitle_pairs,
-                True  # 默认从缓存恢复
-            )
-
-            # 连接信号
-            self.worker_thread.batch_finished.connect(self.single_processing_finished)
-            self.worker_thread.progress_update.connect(self.update_single_progress)
+            # 调用统一的批量处理方法
+            self._start_unified_processing(video_subtitle_pairs, is_single_mode=True)
+        else:
+            # 批量模式：获取选中的文件列表
+            selected_pairs = self.get_selected_pairs()
+            if not selected_pairs:
+                QMessageBox.warning(self, "警告", "请至少选择一个要处理的视频！")
+                return
             
-            # 显示批量进度组件（用于单个视频处理的进度显示）
-            self.batch_progress_group.show()
-            self.batch_progress_bar.setMaximum(1)
-            self.batch_progress_bar.setValue(0)
-            self.current_file_label.setText(f"当前处理文件: {Path(self.current_video_path).name}")
+            # 调用统一的批量处理方法
+            self._start_unified_processing(selected_pairs, is_single_mode=False)
 
-            # 启动线程
-            self.worker_thread.start()
-
-        except Exception as e:
-            import traceback
-
-            error_msg = f"启动处理失败: {str(e)}\n详细错误:\n{traceback.format_exc()}"
-            self.log_text.append(error_msg)
-            QMessageBox.critical(self, "错误", error_msg)
-
-            # 恢复UI状态
-            self.start_btn.setEnabled(True)
-            self.cancel_btn.setEnabled(False)
-
-    def start_batch_processing(self):
-        """开始批量处理"""
-        selected_pairs = self.get_selected_pairs()
-
-        if not selected_pairs:
-            QMessageBox.warning(self, "警告", "请至少选择一个要处理的视频！")
-            return
-
+    def _start_unified_processing(self, video_subtitle_pairs: List[Tuple[str, str]], is_single_mode: bool = False):
+        """统一的处理方法，支持单文件和批量模式"""
         # 初始化TTS处理器
         api_url = self.api_url_edit.text().strip() or "http://127.0.0.1:7860"
         self._initialize_tts_processor(api_url)
@@ -1912,69 +2008,107 @@ class DubbingGUI(QMainWindow):
         self.cancel_btn.setEnabled(True)
 
         try:
-            # 并行批量处理（默认）
+            # 显示进度组件
             self.batch_progress_group.show()
-            self.batch_progress_bar.setMaximum(len(selected_pairs))
+            self.batch_progress_bar.setMaximum(len(video_subtitle_pairs))
             self.batch_progress_bar.setValue(0)
-            self.current_file_label.setText("当前处理文件: 准备中...")
+            
+            if is_single_mode:
+                self.current_file_label.setText(f"当前处理文件: {Path(video_subtitle_pairs[0][0]).name}")
+            else:
+                self.current_file_label.setText("当前处理文件: 准备中...")
 
-            # 获取最大工作线程数
-            max_workers = None
-            if self.max_workers_spinbox.text().strip():
-                try:
-                    max_workers = int(self.max_workers_spinbox.text().strip())
-                    if max_workers < 1:
-                        max_workers = None
-                except ValueError:
-                    max_workers = None
-
-            # 创建流水线批量工作线程
-            self.parallel_batch_worker_thread = StreamlineBatchDubbingWorkerThread(
-                selected_pairs, True  # 默认从缓存恢复
+            # 创建统一的批量处理工作线程
+            self.worker_thread = StreamlineBatchDubbingWorkerThread(
+                video_subtitle_pairs,
+                True  # 默认从缓存恢复
             )
 
-            # 连接信号
-            self.parallel_batch_worker_thread.progress_update.connect(
-                self.parallel_batch_progress_update
-            )
-            self.parallel_batch_worker_thread.batch_finished.connect(
-                self.parallel_batch_finished
-            )
-            self.parallel_batch_worker_thread.log_message.connect(
-                self.append_log_message
-            )
-
-            # 初始化状态表格
-            self.initialize_status_table(selected_pairs)
-
+            # 连接信号 - 统一使用批量处理的信号处理
+            self.worker_thread.batch_finished.connect(self._unified_processing_finished)
+            self.worker_thread.progress_update.connect(self._unified_progress_update)
+            
+            # 初始化状态表格并连接日志信号（单文件和批量模式都显示）
+            self.initialize_status_table(video_subtitle_pairs)
+            self.worker_thread.log_message.connect(self.append_log_message)
+            
             # 启动线程
-            self.parallel_batch_worker_thread.start()
+            self.worker_thread.start()
 
         except Exception as e:
             import traceback
-
-            error_msg = (
-                f"启动批量处理失败: {str(e)}\n详细错误:\n{traceback.format_exc()}"
-            )
+            error_msg = f"启动处理失败: {str(e)}\n详细错误:\n{traceback.format_exc()}"
             self.log_text.append(error_msg)
             QMessageBox.critical(self, "错误", error_msg)
+            
+            # 重置UI状态
+            self.start_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(False)
 
+    def _unified_processing_finished(self, success: bool, message: str, result: Dict[str, Any]):
+        """统一的处理完成回调"""
+        try:
+            self.log_text.append(f"\n处理完成: {message}")
+            
             # 恢复UI状态
             self.start_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
+            
+            # 隐藏进度组件
+            self.batch_progress_group.hide()
+            
+            # 根据当前模式显示相应的结果
+            if self.current_mode == "single":
+                self._handle_single_mode_result(success, message, result)
+            else:
+                self._handle_batch_mode_result(success, message, result)
+                
+        except Exception as e:
+            self.logger.error(f"处理完成回调失败: {e}")
+
+    def _handle_single_mode_result(self, success: bool, message: str, result: Dict[str, Any]):
+        """处理单文件模式的结果"""
+        if success:
+            QMessageBox.information(self, "完成", message)
+            
+            # 尝试打开输出目录
+            if result and result.get("results"):
+                first_result = result["results"][0]
+                if first_result.get("output_dir"):
+                    output_dir = Path(first_result["output_dir"])
+                    if output_dir.exists():
+                        try:
+                            import subprocess
+                            subprocess.run(["explorer", str(output_dir)], check=False)
+                        except Exception as e:
+                            self.logger.debug(f"打开输出目录失败: {e}")
+        else:
+            QMessageBox.critical(self, "处理失败", message)
+
+    def _handle_batch_mode_result(self, success: bool, message: str, result: Dict[str, Any]):
+        """处理批量模式的结果"""
+        if success:
+            QMessageBox.information(self, "批量处理完成", message)
+        else:
+            QMessageBox.warning(self, "批量处理完成", message)
+
+    def _unified_progress_update(self, current: int, total: int, filename: str):
+        """统一的进度更新"""
+        try:
+            self.batch_progress_bar.setMaximum(total)
+            self.batch_progress_bar.setValue(current)
+            
+            if filename:
+                self.current_file_label.setText(f"当前处理文件: {filename}")
+                
+        except Exception as e:
+            self.logger.error(f"进度更新失败: {e}")
 
     def cancel_processing(self):
         """取消处理"""
         if self.worker_thread and self.worker_thread.isRunning():
             self.worker_thread.cancel()
             self.worker_thread.wait()
-
-        if (
-            self.parallel_batch_worker_thread
-            and self.parallel_batch_worker_thread.isRunning()
-        ):
-            self.parallel_batch_worker_thread.cancel()
-            self.parallel_batch_worker_thread.wait()
 
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
@@ -2037,47 +2171,6 @@ class DubbingGUI(QMainWindow):
             QMessageBox.information(self, "成功", message)
         else:
             QMessageBox.critical(self, "失败", message)
-
-    def single_processing_finished(self, success: bool, message: str, result: Dict[str, Any]):
-        """单文件处理完成（通过批量处理线程）"""
-        # 隐藏批量进度组件
-        self.batch_progress_group.hide()
-        
-        # 更新UI状态
-        self.start_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
-
-        if success and result.get('results'):
-            # 从批量处理结果中提取第一个（也是唯一的）结果
-            first_result = result['results'][0]
-            
-            if first_result.get('success'):
-                # 显示结果信息
-                result_info = f"""处理完成！
-
-输出信息:
-• 输出文件: {first_result.get('output_file', '未知')}
-• 输出目录: {first_result.get('output_dir', '未知')}
-• 处理时间: {first_result.get('processing_time', 0):.2f} 秒
-• 完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-您的配音视频已准备就绪！
-"""
-                self.result_text.setText(result_info)
-                QMessageBox.information(self, "成功", "视频处理完成！")
-            else:
-                error_msg = first_result.get('error', '处理失败')
-                self.result_text.setText(f"处理失败: {error_msg}")
-                QMessageBox.critical(self, "失败", error_msg)
-        else:
-            error_msg = result.get('error', message)
-            self.result_text.setText(f"处理失败: {error_msg}")
-            QMessageBox.critical(self, "失败", error_msg)
-
-    def update_single_progress(self, current: int, total: int, filename: str):
-        """更新单文件处理进度"""
-        self.batch_progress_bar.setValue(current)
-        self.current_file_label.setText(f"当前处理文件: {Path(filename).name}")
 
     def show_cache_info(self):
         """显示缓存信息"""
@@ -2264,13 +2357,34 @@ class DubbingGUI(QMainWindow):
     def _initialize_tts_processor(self, api_url: str):
         """初始化TTS处理器"""
         try:
-            self.log_message.emit(f"正在初始化TTS处理器，API地址: {api_url}")
-            initialize_tts_processor(api_url)
+            # 处理用户输入的API URL格式
+            processed_url = self._process_api_url(api_url)
+            
+            self.log_message.emit(f"正在初始化TTS处理器，API地址: {processed_url}")
+            initialize_tts_processor(processed_url)
             self.log_message.emit("TTS处理器初始化成功")
         except Exception as e:
             error_msg = f"TTS处理器初始化失败: {str(e)}"
             self.log_message.emit(error_msg)
             QMessageBox.warning(self, "警告", error_msg)
+    
+    def _process_api_url(self, api_url: str) -> str:
+        """处理API URL格式，确保格式正确"""
+        if not api_url or api_url.strip() == "":
+            return "http://127.0.0.1:7860"
+        
+        api_url = api_url.strip()
+        
+        # 如果用户只输入了IP:端口格式，自动添加http://前缀
+        if not api_url.startswith(('http://', 'https://')):
+            # 检查是否是IP:端口格式
+            if ':' in api_url and not api_url.startswith('//'):
+                api_url = f"http://{api_url}"
+            else:
+                # 如果格式不明确，使用默认值
+                api_url = "http://127.0.0.1:7860"
+        
+        return api_url
 
     def clear_log(self):
         """清空日志"""

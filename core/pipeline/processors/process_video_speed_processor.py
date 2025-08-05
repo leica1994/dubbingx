@@ -31,7 +31,7 @@ class ProcessVideoSpeedProcessor(StepProcessor):
                     success=False, message="缺少路径信息", error="task.paths 为空"
                 )
 
-            silent_video_path = task.paths.get("silent_video_path")
+            silent_video_path = task.paths.get("silent_video")  # 修复：使用正确的键名
             processed_subtitle_path = task.paths.get("processed_subtitle")
             aligned_srt_path = task.paths.get("aligned_srt")
 

@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from .step_processor import StepProcessor
-from .task import ProcessResult, Task, TaskStatus
+from .task import ProcessResult, Task, TaskStatus, StepStatus
 from .task_listener import (CompositeTaskListener, LoggingTaskListener,
                             StatisticsTaskListener, TaskFlowListener,
                             TaskListener)
@@ -244,13 +244,16 @@ class TaskScheduler:
                 # 注意：task.current_step 现在指向下一个要处理的步骤
                 # 所以当 current_step >= 8 时，说明所有步骤都已完成
                 if task.current_step >= len(self.STEP_DEFINITIONS):  # 8个步骤 (0-7)
-                    # 任务完成
+                    # 任务完成，更新状态
+                    task.status = TaskStatus.COMPLETED
+                    task.progress = 1.0
                     self._active_tasks.pop(task.task_id, None)
                     self._completed_tasks[task.task_id] = task
                     self.logger.info(f"任务 {task.task_id} 已完成所有步骤")
             else:
                 # 检查是否需要标记为失败
                 if not task.can_retry():
+                    task.status = TaskStatus.FAILED
                     self._active_tasks.pop(task.task_id, None)
                     self._failed_tasks[task.task_id] = task
                     self.logger.error(f"任务 {task.task_id} 处理失败")
@@ -270,16 +273,78 @@ class TaskScheduler:
             return False
 
         try:
+            # 确定任务应该从哪个步骤开始
+            start_step = self._determine_start_step(task)
+            
+            # 检查任务是否已完成
+            if start_step == -1:
+                # 任务已完成，更新状态并将其标记为完成状态
+                task.status = TaskStatus.COMPLETED
+                task.progress = 1.0
+                with self._lock:
+                    self._active_tasks.pop(task.task_id, None)  # 从活动任务中移除
+                    self._completed_tasks[task.task_id] = task  # 添加到完成任务
+                return True  # 返回成功，因为任务确实已完成
+            
             # 添加到活动任务跟踪
             with self._lock:
                 self._active_tasks[task.task_id] = task
-
-            # 提交到第一个步骤
-            return self.submit_task_to_step(task, 0)
+            
+            self.logger.info(f"任务 {task.task_id} 将从步骤 {start_step} 开始处理")
+            
+            # 提交到确定的起始步骤
+            return self.submit_task_to_step(task, start_step)
 
         except Exception as e:
             self.logger.error(f"提交任务 {task.task_id} 失败: {e}")
             return False
+    
+    def _determine_start_step(self, task: Task) -> int:
+        """
+        确定任务应该从哪个步骤开始处理
+        
+        Args:
+            task: 任务对象
+            
+        Returns:
+            起始步骤ID
+        """
+        try:
+            # 检查已完成的步骤
+            max_completed_step = -1
+            
+            for step_id in range(len(self.STEP_DEFINITIONS)):
+                # 检查步骤结果
+                if step_id in task.step_results:
+                    result = task.step_results[step_id]
+                    if result.success and not result.partial_success:
+                        max_completed_step = step_id
+                        continue
+                
+                # 检查步骤详情状态
+                if step_id in task.step_details:
+                    detail = task.step_details[step_id]
+                    if detail.status == StepStatus.COMPLETED:
+                        max_completed_step = step_id
+                        continue
+                
+                # 如果步骤未完成或失败，从这里开始
+                break
+            
+            # 从下一个未完成的步骤开始
+            start_step = max_completed_step + 1
+            
+            # 检查任务是否已经完全完成
+            if start_step >= len(self.STEP_DEFINITIONS):
+                self.logger.info(f"任务 {task.task_id} 已经完全完成所有 {len(self.STEP_DEFINITIONS)} 个步骤")
+                return -1  # 返回-1表示任务已完成，无需处理
+                
+            return start_step
+            
+        except Exception as e:
+            self.logger.error(f"确定起始步骤失败: {e}")
+            # 默认从第一步开始
+            return 0
 
     def submit_task_to_step(self, task: Task, step_id: int) -> bool:
         """

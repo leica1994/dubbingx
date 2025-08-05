@@ -128,7 +128,9 @@ class TTSProcessor:
                 "success": is_success,
                 "tts_audio_segments": tts_segments,
                 "output_dir": str(output_dir),
-                "total_segments": successful_segments,
+                "total_segments": len(reference_segments),  # 修复：应该是总数
+                "successful_segments": successful_segments,  # 添加：成功的片段数
+                "failed_segments": len(reference_segments) - successful_segments,  # 添加：失败的片段数
                 "total_requested": len(reference_segments),
                 "reference_file": reference_results_path,
                 "generation_info": {
@@ -141,8 +143,11 @@ class TTSProcessor:
                 },
             }
 
-            # 保存TTS结果
-            self._save_tts_results(results, output_dir)
+            # 保存TTS结果并获取保存路径
+            results_file_path = self._save_tts_results(results, output_dir)
+            
+            # 添加结果文件路径到返回结果中
+            results["results_file"] = str(results_file_path)
 
             return results
 
@@ -481,8 +486,8 @@ class TTSProcessor:
             self.logger.warning(f"检查TTS缓存失败: {str(e)}")
             return None
 
-    def _save_tts_results(self, results: Dict[str, Any], output_dir: Path):
-        """保存TTS结果"""
+    def _save_tts_results(self, results: Dict[str, Any], output_dir: Path) -> Path:
+        """保存TTS结果并返回保存的文件路径"""
         try:
             # 添加保存时间戳
             results_copy = results.copy()
@@ -497,9 +502,12 @@ class TTSProcessor:
                 json.dump(results_copy, f, ensure_ascii=False, indent=2)
 
             self.logger.info(f"TTS结果已保存: {result_path}")
+            return result_path
 
         except Exception as e:
             self.logger.error(f"保存TTS结果失败: {str(e)}")
+            # 返回预期的路径，即使保存失败
+            return output_dir / "tts_generation_results.json"
 
     def clear_cache(self):
         """清理TTS模型缓存"""
@@ -569,29 +577,35 @@ def initialize_tts_processor(api_url: str = "http://127.0.0.1:7860") -> TTSProce
 def generate_tts_from_reference(
     reference_results_path: str,
     output_dir: Optional[str] = None,
-    api_url: str = "http://127.0.0.1:7860",
 ) -> Dict[str, Any]:
     """
     便捷函数：根据参考音频结果生成TTS语音
+    
+    注意：使用已初始化的TTS处理器实例，确保API URL一致性
 
     Args:
         reference_results_path: 参考音频结果JSON文件路径
         output_dir: TTS输出目录，默认为JSON文件所在目录下的tts_output
-        api_url: TTS API URL
 
     Returns:
         包含TTS生成结果的字典
     """
-    return get_tts_processor(api_url).generate_tts_from_reference(
+    # 使用已初始化的单例实例，而不是创建新实例
+    global _tts_processor_instance
+    if _tts_processor_instance is None:
+        raise RuntimeError("TTS处理器尚未初始化，请先调用 initialize_tts_processor()")
+    
+    return _tts_processor_instance.generate_tts_from_reference(
         reference_results_path, output_dir
     )
 
 
-def clear_tts_cache(api_url: str = "http://127.0.0.1:7860"):
+def clear_tts_cache():
     """
     便捷函数：清理TTS模型缓存
-
-    Args:
-        api_url: TTS API URL
+    
+    注意：使用已初始化的TTS处理器实例
     """
-    get_tts_processor(api_url).clear_cache()
+    global _tts_processor_instance
+    if _tts_processor_instance is not None:
+        _tts_processor_instance.clear_cache()
