@@ -7,8 +7,7 @@
 from pathlib import Path
 
 from ...audio_align_processor import generate_aligned_srt
-from ...subtitle.subtitle_processor import (convert_subtitle,
-                                            sync_srt_timestamps_to_ass)
+from ...subtitle.subtitle_processor import convert_subtitle, sync_srt_timestamps_to_ass
 from ..step_processor import StepProcessor
 from ..task import ProcessResult, Task
 
@@ -62,9 +61,17 @@ class GenerateAlignedSrtProcessor(StepProcessor):
             self.logger.info(f"开始生成对齐字幕: {aligned_results_path}")
 
             # 生成对齐后的SRT字幕
-            generate_aligned_srt(
+            result = generate_aligned_srt(
                 aligned_results_path, processed_subtitle_path, str(aligned_srt_path)
             )
+
+            # 检查生成结果
+            if not result.get("success", False):
+                return ProcessResult(
+                    success=False,
+                    message="生成对齐字幕失败",
+                    error=result.get("error", "未知错误"),
+                )
 
             # 更新任务路径信息
             task.paths.update(
