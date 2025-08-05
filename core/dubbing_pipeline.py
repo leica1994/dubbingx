@@ -16,14 +16,15 @@ from core.audio_align_processor import (
     generate_aligned_srt,
     process_video_speed_adjustment,
 )
+
+from core.subtitle.subtitle_processor import (
+    convert_subtitle,
+    sync_srt_timestamps_to_ass,
+)
 from core.media_processor import (
     generate_reference_audio,
     merge_audio_video,
     separate_media,
-)
-from core.subtitle.subtitle_processor import (
-    convert_subtitle,
-    sync_srt_timestamps_to_ass,
 )
 from core.subtitle_preprocessor import preprocess_subtitle
 from core.tts_processor import generate_tts_from_reference
@@ -645,7 +646,6 @@ class DubbingPipeline:
 
         return True
 
-    
     def check_and_repair_cache(self, video_path: str) -> Dict[str, Any]:
         """
         检查并修复缓存文件
@@ -1360,7 +1360,6 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 }
 
             elif step_name == "align_audio":
-                from core.audio_align_processor import align_audio_with_subtitles
 
                 result = align_audio_with_subtitles(
                     tts_results_path=str(paths.tts_results),
@@ -1377,11 +1376,6 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 return {"success": True, "result": result}
 
             elif step_name == "generate_aligned_srt":
-                from core.audio_align_processor import generate_aligned_srt
-                from core.subtitle.subtitle_processor import (
-                    convert_subtitle,
-                    sync_srt_timestamps_to_ass,
-                )
 
                 # 生成对齐后的SRT字幕
                 generate_aligned_srt(
@@ -1435,7 +1429,6 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 return {"success": True}
 
             elif step_name == "process_video_speed":
-                from core.audio_align_processor import process_video_speed_adjustment
 
                 process_video_speed_adjustment(
                     str(paths.silent_video),
@@ -1804,3 +1797,253 @@ class ParallelDubbingPipeline(DubbingPipeline):
                 if not r.get("success", False)
             ],
         }
+
+
+class StreamlinePipeline(DubbingPipeline):
+    """基于队列+监听模式的流水线处理器
+    
+    实现真正的流水线并行处理，支持不同任务在不同步骤同时执行
+    """
+    
+    def __init__(self, output_dir: Optional[str] = None):
+        """
+        初始化流水线处理器
+        
+        Args:
+            output_dir: 输出目录路径
+        """
+        super().__init__(output_dir)
+        
+        # 导入流水线组件
+        from .pipeline import (
+            ResourceManager,
+            TaskScheduler,
+            Task,
+            TaskStatus,
+            ResourceType,
+        )
+        from .pipeline.processors import (
+            PreprocessSubtitleProcessor,
+            SeparateMediaProcessor,
+            GenerateReferenceAudioProcessor,
+            GenerateTTSProcessor,
+            AlignAudioProcessor,
+            GenerateAlignedSrtProcessor,
+            ProcessVideoSpeedProcessor,
+            MergeAudioVideoProcessor,
+        )
+        
+        # 初始化组件
+        self.resource_manager = ResourceManager(
+            gpu_count=2,
+            cpu_count=4,
+            io_count=8
+        )
+        
+        # 工作线程配置
+        optimized_workers = {
+            ResourceType.GPU_INTENSIVE: 2,
+            ResourceType.CPU_INTENSIVE: 4,
+            ResourceType.IO_INTENSIVE: 8,
+        }
+        self.task_scheduler = TaskScheduler(
+            resource_manager=self.resource_manager,
+            max_workers_per_step=optimized_workers
+        )
+        
+        # 注册所有步骤处理器
+        processors = [
+            PreprocessSubtitleProcessor(),
+            SeparateMediaProcessor(),
+            GenerateReferenceAudioProcessor(),
+            GenerateTTSProcessor(),
+            AlignAudioProcessor(),
+            GenerateAlignedSrtProcessor(),
+            ProcessVideoSpeedProcessor(),
+            MergeAudioVideoProcessor(),
+        ]
+        
+        for processor in processors:
+            self.task_scheduler.register_processor(processor)
+        
+        self.logger.info("StreamlinePipeline 初始化完成")
+    
+    def process_batch_streamline(
+        self, 
+        video_subtitle_pairs: List[Tuple[str, Optional[str]]],
+        resume_from_cache: bool = True
+    ) -> Dict[str, Any]:
+        """
+        使用流水线模式批量处理视频
+        
+        Args:
+            video_subtitle_pairs: 包含(video_path, subtitle_path)元组的列表
+            resume_from_cache: 是否从缓存恢复（暂不支持）
+            
+        Returns:
+            批量处理结果
+        """
+        from .pipeline import Task, TaskStatus
+        
+        start_time = time.time()
+        self.logger.info(f"开始流水线批量处理 {len(video_subtitle_pairs)} 个视频")
+        
+        # 创建任务列表
+        tasks = []
+        for i, (video_path, subtitle_path) in enumerate(video_subtitle_pairs):
+            task_id = f"streamline_task_{i:03d}_{Path(video_path).stem}"
+            task = Task(
+                task_id=task_id,
+                video_path=video_path,
+                subtitle_path=subtitle_path
+            )
+            tasks.append(task)
+        
+        try:
+            # 启动调度器
+            with self.task_scheduler:
+                # 提交所有任务
+                submit_results = self.task_scheduler.submit_batch_tasks(tasks)
+                successful_submits = sum(submit_results)
+                
+                self.logger.info(f"成功提交 {successful_submits}/{len(tasks)} 个任务")
+                
+                if successful_submits == 0:
+                    return {
+                        "success": False,
+                        "message": "没有任务成功提交",
+                        "total_count": len(video_subtitle_pairs),
+                        "success_count": 0,
+                        "failed_count": len(video_subtitle_pairs),
+                        "total_time": time.time() - start_time,
+                        "results": [],
+                    }
+                
+                # 等待所有任务完成
+                self.logger.info("等待所有任务完成...")
+                completed = self.task_scheduler.wait_for_completion(timeout=3600)  # 1小时超时
+                
+                if not completed:
+                    self.logger.warning("部分任务未在超时时间内完成")
+                
+                # 收集结果
+                all_tasks_status = self.task_scheduler.get_all_tasks_status()
+                results = self._format_streamline_results(all_tasks_status, video_subtitle_pairs)
+                
+        except Exception as e:
+            self.logger.error(f"流水线处理异常: {e}", exc_info=True)
+            return {
+                "success": False,
+                "message": f"流水线处理失败: {str(e)}",
+                "error": str(e),
+                "total_count": len(video_subtitle_pairs),
+                "success_count": 0,
+                "failed_count": len(video_subtitle_pairs),
+                "total_time": time.time() - start_time,
+                "results": [],
+            }
+        
+        # 统计结果
+        total_time = time.time() - start_time
+        success_count = sum(1 for result in results if result["success"])
+        failed_count = len(results) - success_count
+        
+        self.logger.info(f"流水线批量处理完成，耗时 {total_time:.2f}s")
+        self.logger.info(f"成功: {success_count}, 失败: {failed_count}")
+        
+        return {
+            "success": failed_count == 0,
+            "message": f"流水线批量处理完成: {success_count} 成功, {failed_count} 失败",
+            "total_count": len(video_subtitle_pairs),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "total_time": total_time,
+            "results": results,
+        }
+    
+    def _format_streamline_results(
+        self,
+        all_tasks_status: Dict[str, Dict[str, Any]],
+        video_subtitle_pairs: List[Tuple[str, Optional[str]]]
+    ) -> List[Dict[str, Any]]:
+        """格式化流水线处理结果"""
+        results = []
+        
+        # 合并所有任务状态
+        all_tasks = {}
+        all_tasks.update(all_tasks_status.get("active", {}))
+        all_tasks.update(all_tasks_status.get("completed", {}))
+        all_tasks.update(all_tasks_status.get("failed", {}))
+        
+        for i, (video_path, subtitle_path) in enumerate(video_subtitle_pairs):
+            task_id = f"streamline_task_{i:03d}_{Path(video_path).stem}"
+            task_status = all_tasks.get(task_id)
+            
+            if not task_status:
+                # 任务未找到
+                results.append({
+                    "success": False,
+                    "task_id": task_id,
+                    "video_path": video_path,
+                    "subtitle_path": subtitle_path,
+                    "message": "任务未找到",
+                    "error": "任务可能提交失败",
+                })
+                continue
+            
+            # 判断任务是否成功
+            status = task_status.get("status", "unknown")
+            success = status == "completed"
+            
+            result = {
+                "success": success,
+                "task_id": task_id,
+                "video_path": video_path,
+                "subtitle_path": subtitle_path,
+                "status": status,
+                "current_step": task_status.get("current_step", 0),
+                "progress": task_status.get("progress", 0.0),
+                "processing_time": task_status.get("processing_time", 0.0),
+                "message": "流水线处理完成" if success else "流水线处理失败",
+            }
+            
+            if success:
+                # 任务成功，添加输出信息
+                output_dir = Path(video_path).parent / "outputs" / Path(video_path).stem
+                final_video = output_dir / f"{Path(video_path).stem}_dubbed{Path(video_path).suffix}"
+                
+                result.update({
+                    "output_file": str(final_video) if final_video.exists() else "",
+                    "output_dir": str(output_dir),
+                })
+            else:
+                # 任务失败，添加错误信息
+                result.update({
+                    "error": task_status.get("error_message", "未知错误"),
+                    "retry_count": task_status.get("retry_count", 0),
+                })
+            
+            results.append(result)
+        
+        return results
+    
+    def get_pipeline_stats(self) -> Dict[str, Any]:
+        """获取流水线统计信息"""
+        if not hasattr(self, 'task_scheduler'):
+            return {"error": "流水线未初始化"}
+        
+        return self.task_scheduler.get_scheduler_stats()
+    
+    def cancel_all_tasks(self) -> int:
+        """取消所有任务"""
+        if not hasattr(self, 'task_scheduler'):
+            return 0
+        
+        return self.task_scheduler.cancel_all_tasks()
+    
+    def is_running(self) -> bool:
+        """检查流水线是否在运行"""
+        if not hasattr(self, 'task_scheduler'):
+            return False
+        
+        return self.task_scheduler.is_running()

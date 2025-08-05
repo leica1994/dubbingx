@@ -533,7 +533,7 @@ def get_tts_processor(api_url: str = "http://127.0.0.1:7860") -> TTSProcessor:
 def generate_tts_from_reference(
         reference_results_path: str,
         output_dir: Optional[str] = None,
-        api_url: str = "http://127.0.0.1:7860",
+        api_url: str = "https://index-tts-1294-njyiayqr-7860.550c.cloud",
 ) -> Dict[str, Any]:
     """
     便捷函数：根据参考音频结果生成TTS语音
