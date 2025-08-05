@@ -30,7 +30,7 @@ from core.media_processor import (generate_reference_audio, merge_audio_video,
 from core.subtitle.subtitle_processor import (convert_subtitle,
                                               sync_srt_timestamps_to_ass)
 from core.subtitle_preprocessor import preprocess_subtitle
-from core.tts_processor import generate_tts_from_reference
+from core.tts_processor import generate_tts_from_reference, initialize_tts_processor
 
 
 class GUIStreamlinePipeline(QObject, StreamlinePipeline):
@@ -1227,6 +1227,20 @@ class DubbingGUI(QMainWindow):
         parallel_options_layout.addStretch()
         options_layout.addLayout(parallel_options_layout)
 
+        # Index-TTS API配置
+        api_options_layout = QHBoxLayout()
+
+        api_options_layout.addWidget(QLabel("Index-TTS API:"))
+
+        self.api_url_edit = QLineEdit()
+        self.api_url_edit.setPlaceholderText("http://127.0.0.1:7860")
+        self.api_url_edit.setText("http://127.0.0.1:7860")  # 设置默认值
+        self.api_url_edit.setMinimumWidth(200)
+        api_options_layout.addWidget(self.api_url_edit)
+
+        api_options_layout.addStretch()
+        options_layout.addLayout(api_options_layout)
+
         layout.addWidget(options_group)
 
         # 添加弹性空间
@@ -2190,6 +2204,10 @@ class DubbingGUI(QMainWindow):
             QMessageBox.warning(self, "警告", "视频文件不存在！")
             return
 
+        # 初始化TTS处理器
+        api_url = self.api_url_edit.text().strip() or "http://127.0.0.1:7860"
+        self._initialize_tts_processor(api_url)
+
         # 更新UI状态
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
@@ -2230,6 +2248,10 @@ class DubbingGUI(QMainWindow):
         if not selected_pairs:
             QMessageBox.warning(self, "警告", "请至少选择一个要处理的视频！")
             return
+
+        # 初始化TTS处理器
+        api_url = self.api_url_edit.text().strip() or "http://127.0.0.1:7860"
+        self._initialize_tts_processor(api_url)
 
         # 更新UI状态
         self.start_btn.setEnabled(False)
@@ -2456,6 +2478,17 @@ class DubbingGUI(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "错误", f"修复缓存失败: {str(e)}")
+
+    def _initialize_tts_processor(self, api_url: str):
+        """初始化TTS处理器"""
+        try:
+            self.log_message.emit(f"正在初始化TTS处理器，API地址: {api_url}")
+            initialize_tts_processor(api_url)
+            self.log_message.emit("TTS处理器初始化成功")
+        except Exception as e:
+            error_msg = f"TTS处理器初始化失败: {str(e)}"
+            self.log_message.emit(error_msg)
+            QMessageBox.warning(self, "警告", error_msg)
 
     def clear_log(self):
         """清空日志"""

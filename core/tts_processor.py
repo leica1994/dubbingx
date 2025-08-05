@@ -518,15 +518,33 @@ class TTSProcessor:
 
 
 # 单例实例
-_tts_processor_instance = None
+_tts_processor_instance: TTSProcessor = None
 
 
 def get_tts_processor(api_url: str = "http://127.0.0.1:7860") -> TTSProcessor:
     """获取 TTSProcessor 单例实例"""
     global _tts_processor_instance
-    if _tts_processor_instance is None:
+    if _tts_processor_instance is None or _tts_processor_instance.api_url != api_url:
+        # 如果实例不存在或api_url不同，创建新实例
         _tts_processor_instance = TTSProcessor(api_url)
     return _tts_processor_instance
+
+
+def reset_tts_processor():
+    """重置 TTSProcessor 单例实例，下次调用get_tts_processor时将创建新实例"""
+    global _tts_processor_instance
+    if _tts_processor_instance is not None:
+        try:
+            _tts_processor_instance.clear_cache()
+        except Exception:
+            pass  # 忽略清理缓存时的错误
+        _tts_processor_instance = None
+
+
+def initialize_tts_processor(api_url: str = "http://127.0.0.1:7860") -> TTSProcessor:
+    """初始化或重新初始化TTS处理器，强制使用指定的api_url"""
+    reset_tts_processor()
+    return get_tts_processor(api_url)
 
 
 # 便捷函数
