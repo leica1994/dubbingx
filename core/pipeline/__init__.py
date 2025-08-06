@@ -10,15 +10,26 @@
 - 容错和重试机制
 """
 
-from .processors import (AlignAudioProcessor, GenerateAlignedSrtProcessor,
-                         GenerateReferenceAudioProcessor, GenerateTTSProcessor,
-                         MergeAudioVideoProcessor, PreprocessSubtitleProcessor,
-                         ProcessVideoSpeedProcessor, SeparateMediaProcessor)
+from .processors import (
+    AlignAudioProcessor,
+    GenerateAlignedSrtProcessor,
+    GenerateReferenceAudioProcessor,
+    GenerateTTSProcessor,
+    MergeAudioVideoProcessor,
+    PreprocessSubtitleProcessor,
+    ProcessVideoSpeedProcessor,
+    SeparateMediaProcessor,
+)
 from .step_processor import StepProcessor
 from .task import ProcessResult, ResourceType, Task, TaskStatus
-from .task_listener import (CallbackTaskListener, CompositeTaskListener,
-                            LoggingTaskListener, StatisticsTaskListener,
-                            TaskFlowListener, TaskListener)
+from .task_listener import (
+    CallbackTaskListener,
+    CompositeTaskListener,
+    LoggingTaskListener,
+    StatisticsTaskListener,
+    TaskFlowListener,
+    TaskListener,
+)
 from .task_queue import QueueManager, TaskEvent, TaskEventType, TaskQueue
 from .task_scheduler import TaskScheduler
 

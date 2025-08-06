@@ -35,12 +35,12 @@ class SubtitleEntry:
         # 处理时间字符串反序列化
         start_time = data["start_time"]
         end_time = data["end_time"]
-        
+
         if isinstance(start_time, str):
             start_time = datetime.time.fromisoformat(start_time)
         if isinstance(end_time, str):
             end_time = datetime.time.fromisoformat(end_time)
-            
+
         return cls(
             start_time=start_time,
             end_time=end_time,

@@ -1,63 +1,61 @@
-"""
-DubbingX GUI 最终版 - 智能视频配音系统图形界面
-简洁清晰的界面设计，优化可读性
-"""
+"""DubbingX GUI - 智能视频配音系统图形界面"""
 
-import json
 import logging
-import signal
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox,
-                               QFileDialog, QGridLayout, QGroupBox,
-                               QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                               QMainWindow, QMessageBox, QProgressBar,
-                               QPushButton, QRadioButton, QSplitter,
-                               QTableWidget, QTableWidgetItem, QTabWidget,
-                               QTextEdit, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QCheckBox,
+    QFileDialog,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
-from core.pipeline.processors.audio_align_processor import (
-    align_audio_with_subtitles_core as align_audio_with_subtitles,
-    generate_aligned_srt_core as generate_aligned_srt,
-    process_video_speed_adjustment_core as process_video_speed_adjustment
-)
 from core.dubbing_pipeline import StreamlinePipeline
-from core.pipeline.processors.media_processor import (
-    generate_reference_audio_core as generate_reference_audio,
-    merge_audio_video_core as merge_audio_video,
-    separate_media_core as separate_media
-)
-from core.subtitle.subtitle_processor import (convert_subtitle,
-                                              sync_srt_timestamps_to_ass)
-from core.pipeline.processors.subtitle_preprocessor import preprocess_subtitle_core as preprocess_subtitle
-from core.tts_processor import generate_tts_from_reference, initialize_tts_processor
+from core.tts_processor import initialize_tts_processor
 
 
 class GUIStreamlinePipeline(StreamlinePipeline):
-    """GUI专用的流水线处理器，支持日志输出"""
+    """GUI专用的流水线处理器"""
 
-    # 信号定义
-    log_message = Signal(str)  # 日志消息
-    # 继承StreamlinePipeline的step_status_changed信号
+    log_message = Signal(str)
 
     def __init__(self, output_dir: Optional[str] = None):
-        # 只初始化StreamlinePipeline，因为它已经继承了QObject
         super().__init__(output_dir)
-
-        # 确保logger存在（从StreamlinePipeline继承）
-        if not hasattr(self, 'logger'):
+        if not hasattr(self, "logger"):
             self.logger = logging.getLogger(__name__)
-
-        # 设置日志处理器
         self.setup_logging()
 
     def setup_logging(self):
-        """设置日志处理器，将日志发送到信号"""
+        """设置日志处理器"""
+        handler = self._create_signal_handler()
+        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+        self._delayed_setup_logging(handler)
+
+    def _create_signal_handler(self):
+        """创建信号日志处理器"""
 
         class SignalLogHandler(logging.Handler):
             def __init__(self, signal_emitter):
@@ -72,55 +70,49 @@ class GUIStreamlinePipeline(StreamlinePipeline):
         handler.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
+        return handler
 
-        # 添加到当前logger和所有子模块的logger
-        self.logger.addHandler(handler)
-        self.logger.setLevel(logging.INFO)
-        
-        # 延迟设置流水线组件日志处理器（在初始化完成后）
-        self._delayed_setup_logging(handler)
-    
     def _delayed_setup_logging(self, handler):
         """延迟设置流水线组件的日志处理器"""
-        # 检查task_scheduler是否已初始化
-        if hasattr(self, 'task_scheduler') and self.task_scheduler:
-            self.task_scheduler.logger.addHandler(handler)
-            self.task_scheduler.logger.setLevel(logging.INFO)
-            
-            # 为所有处理器添加日志处理器
-            for processor in self.task_scheduler.processors.values():
-                processor.logger.addHandler(handler)
-                processor.logger.setLevel(logging.INFO)
-                
-            # 为队列管理器添加日志处理器
-            if hasattr(self.task_scheduler, 'queue_manager'):
-                self.task_scheduler.queue_manager.logger.addHandler(handler)
-                self.task_scheduler.queue_manager.logger.setLevel(logging.INFO)
-                
+        if hasattr(self, "task_scheduler") and self.task_scheduler:
+            self._setup_scheduler_logging(handler)
             self.logger.info("流水线日志处理器设置完成")
 
+    def _setup_scheduler_logging(self, handler):
+        """设置调度器相关的日志处理器"""
+        self.task_scheduler.logger.addHandler(handler)
+        self.task_scheduler.logger.setLevel(logging.INFO)
+
+        for processor in self.task_scheduler.processors.values():
+            processor.logger.addHandler(handler)
+            processor.logger.setLevel(logging.INFO)
+
+        if hasattr(self.task_scheduler, "queue_manager"):
+            self.task_scheduler.queue_manager.logger.addHandler(handler)
+            self.task_scheduler.queue_manager.logger.setLevel(logging.INFO)
+
     def process_batch_streamline(
-        self, 
+        self,
         video_subtitle_pairs: List[Tuple[str, Optional[str]]],
-        resume_from_cache: bool = True
+        resume_from_cache: bool = True,
     ) -> Dict[str, Any]:
-        """
-        使用流水线模式批量处理视频（带GUI日志支持）
-        """
-        # 在处理开始前，确保日志处理器已设置
-        if hasattr(self, 'task_scheduler') and self.task_scheduler:
-            # 重新设置日志处理器以确保所有组件都有日志输出
-            handler = None
-            for h in self.logger.handlers:
-                if hasattr(h, 'signal_emitter'):
-                    handler = h
-                    break
-            
+        """使用流水线模式批量处理视频（带GUI日志支持）"""
+        self._ensure_logging_setup()
+        return super().process_batch_streamline(video_subtitle_pairs, resume_from_cache)
+
+    def _ensure_logging_setup(self):
+        """确保日志处理器已设置"""
+        if hasattr(self, "task_scheduler") and self.task_scheduler:
+            handler = self._find_signal_handler()
             if handler:
                 self._delayed_setup_logging(handler)
-        
-        # 调用父类方法
-        return super().process_batch_streamline(video_subtitle_pairs, resume_from_cache)
+
+    def _find_signal_handler(self):
+        """查找信号处理器"""
+        for h in self.logger.handlers:
+            if hasattr(h, "signal_emitter"):
+                return h
+        return None
 
 
 class VideoSubtitleMatcher:
@@ -128,20 +120,17 @@ class VideoSubtitleMatcher:
 
     @staticmethod
     def find_video_subtitle_pairs(folder_path: str) -> List[Tuple[str, str]]:
-        """
-        在文件夹中查找视频和对应的字幕文件，只返回完全匹配的对
-
-        Args:
-            folder_path: 文件夹路径
-
-        Returns:
-            List of (video_path, subtitle_path) tuples，只返回有完全匹配字幕的视频
-        """
+        """在文件夹中查找视频和对应的字幕文件"""
         folder = Path(folder_path)
         if not folder.exists():
             return []
 
-        # 支持的视频格式
+        video_files = VideoSubtitleMatcher._find_video_files(folder)
+        return VideoSubtitleMatcher._match_subtitles(video_files)
+
+    @staticmethod
+    def _find_video_files(folder: Path) -> List[Path]:
+        """查找所有视频文件"""
         video_extensions = {
             ".mp4",
             ".avi",
@@ -153,53 +142,48 @@ class VideoSubtitleMatcher:
             ".webm",
             ".ts",
         }
-        # 支持的字幕格式
-        subtitle_extensions = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
 
-        # 递归查找所有视频文件，使用集合避免重复
         video_files_set = set()
         for ext in video_extensions:
             video_files_set.update(folder.rglob(f"*{ext}"))
             video_files_set.update(folder.rglob(f"*{ext.upper()}"))
-        
-        # 转换为列表并排序
-        video_files = sorted(list(video_files_set))
 
+        return sorted(list(video_files_set))
+
+    @staticmethod
+    def _match_subtitles(video_files: List[Path]) -> List[Tuple[str, str]]:
+        """为视频文件匹配字幕"""
+        subtitle_extensions = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
         pairs = []
-        # 用于跟踪已匹配的字幕文件，避免重复匹配
         matched_subtitles = set()
 
         for video_file in video_files:
-            video_name = video_file.stem
-            video_folder = video_file.parent
-
-            # 只查找完全匹配的字幕文件
-            subtitle_file = None
-            for ext in subtitle_extensions:
-                potential_subtitle = video_folder / f"{video_name}{ext}"
-                if (
-                    potential_subtitle.exists()
-                    and str(potential_subtitle) not in matched_subtitles
-                ):
-                    subtitle_file = potential_subtitle
-                    matched_subtitles.add(str(potential_subtitle))
-                    break
-
-                # 尝试大写扩展名
-                potential_subtitle = video_folder / f"{video_name}{ext.upper()}"
-                if (
-                    potential_subtitle.exists()
-                    and str(potential_subtitle) not in matched_subtitles
-                ):
-                    subtitle_file = potential_subtitle
-                    matched_subtitles.add(str(potential_subtitle))
-                    break
-
-            # 只有找到完全匹配的字幕文件才添加到结果中
+            subtitle_file = VideoSubtitleMatcher._find_matching_subtitle(
+                video_file, subtitle_extensions, matched_subtitles
+            )
             if subtitle_file:
                 pairs.append((str(video_file), str(subtitle_file)))
+                matched_subtitles.add(str(subtitle_file))
 
         return pairs
+
+    @staticmethod
+    def _find_matching_subtitle(
+        video_file: Path, subtitle_extensions: set, matched_subtitles: set
+    ) -> Optional[Path]:
+        """为单个视频文件查找匹配的字幕"""
+        video_name = video_file.stem
+        video_folder = video_file.parent
+
+        for ext in subtitle_extensions:
+            for case_ext in [ext, ext.upper()]:
+                potential_subtitle = video_folder / f"{video_name}{case_ext}"
+                if (
+                    potential_subtitle.exists()
+                    and str(potential_subtitle) not in matched_subtitles
+                ):
+                    return potential_subtitle
+        return None
 
 
 class LogHandler(logging.Handler):
@@ -234,7 +218,7 @@ class StreamlineBatchDubbingWorkerThread(QThread):
 
         # 创建流水线管道
         self.pipeline = GUIStreamlinePipeline()
-        
+
         # 连接流水线日志信号到工作线程信号
         self.pipeline.log_message.connect(self.log_message.emit)
 
@@ -274,7 +258,7 @@ class DubbingGUI(QMainWindow):
 
         # 连接日志信号
         self.log_message.connect(self.append_log_message)
-        
+
         # 连接直接状态信号（优先级高于日志解析）
         self.gui_pipeline.step_status_changed.connect(self.update_step_status_direct)
 
@@ -294,7 +278,7 @@ class DubbingGUI(QMainWindow):
 
         # 设置日志
         self.setup_logging()
-        
+
         # 初始化logger
         self.logger = logging.getLogger(__name__)
 
@@ -306,152 +290,161 @@ class DubbingGUI(QMainWindow):
         self.video_subtitle_pairs = []
 
     def closeEvent(self, event):
-        """处理窗口关闭事件，确保所有资源被正确清理"""
+        """处理窗口关闭事件"""
         try:
             print("开始关闭应用程序...")
-            
-            # 停止并清理所有工作线程
-            self._cleanup_worker_threads()
-            
-            # 清理流水线资源
-            self._cleanup_pipelines()
-            
-            # 清理日志处理器
-            self._cleanup_log_handlers()
-            
+            self._cleanup_resources()
             print("应用程序资源清理完成")
-            
         except Exception as e:
             print(f"关闭时清理资源出错: {e}")
-        
         finally:
-            # 接受关闭事件
             event.accept()
-            
-            # 立即强制退出
             self._force_exit()
+
+    def _cleanup_resources(self):
+        """清理所有资源"""
+        self._cleanup_worker_threads()
+        self._cleanup_pipelines()
+        self._cleanup_log_handlers()
 
     def _cleanup_worker_threads(self):
         """清理工作线程"""
-        # 停止并清理工作线程
-        if hasattr(self, 'worker_thread') and self.worker_thread is not None:
+        self._cleanup_single_thread()
+        self._cleanup_batch_thread()
+
+    def _cleanup_single_thread(self):
+        """清理单文件处理线程"""
+        if hasattr(self, "worker_thread") and self.worker_thread is not None:
             print("停止单文件处理线程...")
-            if self.worker_thread.isRunning():
-                self.worker_thread.terminate()
-                self.worker_thread.wait(1000)  # 减少等待时间到1秒
-                if self.worker_thread.isRunning():
-                    self.worker_thread.kill()
+            self._terminate_thread(self.worker_thread)
             self.worker_thread = None
 
-        # 停止并清理批量处理线程
-        if hasattr(self, 'parallel_batch_worker_thread') and self.parallel_batch_worker_thread is not None:
+    def _cleanup_batch_thread(self):
+        """清理批量处理线程"""
+        if (
+            hasattr(self, "parallel_batch_worker_thread")
+            and self.parallel_batch_worker_thread is not None
+        ):
             print("停止批量处理线程...")
-            if self.parallel_batch_worker_thread.isRunning():
-                # 先尝试取消任务
-                if hasattr(self.parallel_batch_worker_thread, 'cancel'):
-                    self.parallel_batch_worker_thread.cancel()
-                
-                # 终止线程
-                self.parallel_batch_worker_thread.terminate()
-                self.parallel_batch_worker_thread.wait(1000)  # 减少等待时间到1秒
-                if self.parallel_batch_worker_thread.isRunning():
-                    self.parallel_batch_worker_thread.kill()
+            if hasattr(self.parallel_batch_worker_thread, "cancel"):
+                self.parallel_batch_worker_thread.cancel()
+            self._terminate_thread(self.parallel_batch_worker_thread)
             self.parallel_batch_worker_thread = None
+
+    def _terminate_thread(self, thread):
+        """终止线程"""
+        if thread.isRunning():
+            thread.terminate()
+            thread.wait(1000)
+            if thread.isRunning():
+                thread.kill()
 
     def _cleanup_pipelines(self):
         """清理流水线资源"""
-        # 清理GUI流水线
-        if hasattr(self, 'gui_pipeline') and self.gui_pipeline is not None:
+        if hasattr(self, "gui_pipeline") and self.gui_pipeline is not None:
             print("停止GUI流水线...")
-            # 停止TaskScheduler
-            if hasattr(self.gui_pipeline, 'task_scheduler') and self.gui_pipeline.task_scheduler is not None:
-                try:
-                    # 设置更短的超时时间
-                    self.gui_pipeline.task_scheduler.stop(timeout=2.0)
-                    
-                    # 强制关闭所有线程池
-                    if hasattr(self.gui_pipeline.task_scheduler, 'worker_pools'):
-                        for step_id, executor in self.gui_pipeline.task_scheduler.worker_pools.items():
-                            print(f"强制关闭步骤 {step_id} 的线程池...")
-                            if hasattr(executor, '_threads'):
-                                # 强制终止所有线程
-                                for thread in list(executor._threads):
-                                    if thread.is_alive():
-                                        # 使用私有方法强制终止线程
-                                        try:
-                                            import ctypes
-                                            ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                                                ctypes.c_long(thread.ident), 
-                                                ctypes.py_object(SystemExit)
-                                            )
-                                            if ret == 0:
-                                                print(f"线程 {thread.ident} 终止失败")
-                                            else:
-                                                print(f"线程 {thread.ident} 已强制终止")
-                                        except Exception as e:
-                                            print(f"强制终止线程失败: {e}")
-                            
-                            # 立即关闭线程池，不等待
-                            executor.shutdown(wait=False)
-                    
-                except Exception as e:
-                    print(f"停止TaskScheduler时出错: {e}")
-            
-            # 清理其他流水线资源
-            if hasattr(self.gui_pipeline, 'cleanup'):
-                try:
-                    self.gui_pipeline.cleanup()
-                except Exception as e:
-                    print(f"清理GUI流水线时出错: {e}")
-            self.gui_pipeline = None
+            self._stop_task_scheduler()
+            self._cleanup_gui_pipeline()
+
+    def _stop_task_scheduler(self):
+        """停止任务调度器"""
+        if (
+            hasattr(self.gui_pipeline, "task_scheduler")
+            and self.gui_pipeline.task_scheduler is not None
+        ):
+            try:
+                self.gui_pipeline.task_scheduler.stop(timeout=2.0)
+                self._force_close_thread_pools()
+            except Exception as e:
+                print(f"停止TaskScheduler时出错: {e}")
+
+    def _force_close_thread_pools(self):
+        """强制关闭所有线程池"""
+        if hasattr(self.gui_pipeline.task_scheduler, "worker_pools"):
+            for (
+                step_id,
+                executor,
+            ) in self.gui_pipeline.task_scheduler.worker_pools.items():
+                print(f"强制关闭步骤 {step_id} 的线程池...")
+                self._force_terminate_threads(executor)
+                executor.shutdown(wait=False)
+
+    def _force_terminate_threads(self, executor):
+        """强制终止线程池中的线程"""
+        if hasattr(executor, "_threads"):
+            for thread in list(executor._threads):
+                if thread.is_alive():
+                    try:
+                        import ctypes
+
+                        ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                            ctypes.c_long(thread.ident), ctypes.py_object(SystemExit)
+                        )
+                        print(f"线程 {thread.ident} 终止状态: {ret}")
+                    except Exception as e:
+                        print(f"强制终止线程失败: {e}")
+
+    def _cleanup_gui_pipeline(self):
+        """清理GUI流水线"""
+        if hasattr(self.gui_pipeline, "cleanup"):
+            try:
+                self.gui_pipeline.cleanup()
+            except Exception as e:
+                print(f"清理GUI流水线时出错: {e}")
+        self.gui_pipeline = None
 
     def _cleanup_log_handlers(self):
         """清理日志处理器"""
         try:
             root_logger = logging.getLogger()
-            handlers_to_remove = []
-            for handler in root_logger.handlers[:]:
-                if hasattr(handler, 'signal_emitter'):
-                    handlers_to_remove.append(handler)
-            
+            handlers_to_remove = [
+                h for h in root_logger.handlers[:] if hasattr(h, "signal_emitter")
+            ]
+
             for handler in handlers_to_remove:
                 root_logger.removeHandler(handler)
                 try:
                     handler.close()
-                except:
+                except Exception:
                     pass
         except Exception as e:
             print(f"清理日志处理器时出错: {e}")
 
     def _force_exit(self):
         """强制退出应用程序"""
+        self._print_thread_info()
+        self._attempt_normal_exit()
+        self._emergency_exit()
+
+    def _print_thread_info(self):
+        """打印线程信息"""
         import threading
-        import os
-        import sys
-        
-        # 打印活跃线程信息用于调试
+
         active_threads = threading.active_count()
         print(f"当前活跃线程数: {active_threads}")
-        
-        # 如果有多余的线程，列出它们
+
         if active_threads > 1:
             print("活跃线程列表:")
             for thread in threading.enumerate():
                 print(f"  - {thread.name} (daemon: {thread.daemon})")
-        
-        # 尝试正常退出QApplication
+
+    def _attempt_normal_exit(self):
+        """尝试正常退出"""
         app = QApplication.instance()
         if app:
             app.quit()
-        
-        # 立即强制退出进程，不再等待
+
+    def _emergency_exit(self):
+        """紧急强制退出"""
         print("强制退出进程...")
         try:
-            # 使用最激进的退出方式
-            os._exit(0)  # 立即终止进程，不执行清理
+            import os
+
+            os._exit(0)
         except SystemExit:
-            # 如果os._exit失败，尝试其他方式
+            import os
             import signal
+
             os.kill(os.getpid(), signal.SIGTERM)
 
     def setup_theme(self):
@@ -1043,7 +1036,7 @@ class DubbingGUI(QMainWindow):
             }
         """
         )
-        
+
         # 隐藏垂直表头（序号列）
         self.file_table.verticalHeader().setVisible(False)
 
@@ -1154,12 +1147,21 @@ class DubbingGUI(QMainWindow):
         # 处理状态表格 - 显示8个步骤的详细状态
         self.status_table = QTableWidget()
         self.status_table.setColumnCount(11)  # 视频文件 + 8个步骤 + 状态 + 进度
-        self.status_table.setHorizontalHeaderLabels([
-            "视频文件", 
-            "步骤1\n字幕预处理", "步骤2\n媒体分离", "步骤3\n参考音频", "步骤4\nTTS生成",
-            "步骤5\n音频对齐", "步骤6\n对齐字幕", "步骤7\n视频调速", "步骤8\n合并输出",
-            "整体状态", "进度"
-        ])
+        self.status_table.setHorizontalHeaderLabels(
+            [
+                "视频文件",
+                "步骤1\n字幕预处理",
+                "步骤2\n媒体分离",
+                "步骤3\n参考音频",
+                "步骤4\nTTS生成",
+                "步骤5\n音频对齐",
+                "步骤6\n对齐字幕",
+                "步骤7\n视频调速",
+                "步骤8\n合并输出",
+                "整体状态",
+                "进度",
+            ]
+        )
 
         # 设置表格样式
         self.status_table.setStyleSheet(
@@ -1190,12 +1192,12 @@ class DubbingGUI(QMainWindow):
         # 设置表格列宽
         header = self.status_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)  # 视频文件名
-        
+
         # 8个步骤列设置为固定宽度
         for i in range(1, 9):  # 列索引 1-8
             header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-        
-        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)   # 整体状态
+
+        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # 整体状态
         header.setSectionResizeMode(10, QHeaderView.ResizeToContents)  # 进度
 
         layout.addWidget(self.status_table)
@@ -1205,12 +1207,12 @@ class DubbingGUI(QMainWindow):
         legend_label = QLabel("状态图标说明：")
         legend_label.setFont(QFont("Microsoft YaHei", 9))
         legend_layout.addWidget(legend_label)
-        
+
         icons_label = QLabel("⏸️ 未开始   🔄 处理中   ✅ 已完成   ❌ 失败")
         icons_label.setFont(QFont("Microsoft YaHei", 9))
         icons_label.setStyleSheet("color: #6c757d;")
         legend_layout.addWidget(icons_label)
-        
+
         legend_layout.addStretch()
         layout.addLayout(legend_layout)
 
@@ -1219,39 +1221,51 @@ class DubbingGUI(QMainWindow):
     def append_log_message(self, message: str):
         """追加日志消息到文本框并解析任务状态"""
         self.log_text.append(message)
-        
+
         # 解析日志消息来更新任务状态
         self.parse_log_for_task_status(message)
-    
+
     def parse_log_for_task_status(self, message: str):
         """解析日志消息以更新任务状态
-        
+
         注意：此方法作为备用机制保留，直接状态信号（update_step_status_direct）具有更高优先级
         """
         try:
             # 1. 解析工作线程开始处理任务的日志
             # 格式: "工作线程 Step-X-stepname-Y 开始处理任务 streamline_task_XXX_taskname"
-            if "工作线程" in message and "开始处理任务" in message and "streamline_task_" in message:
+            if (
+                "工作线程" in message
+                and "开始处理任务" in message
+                and "streamline_task_" in message
+            ):
                 import re
-                step_match = re.search(r'Step-(\d+)-', message)
-                task_match = re.search(r'streamline_task_\d+_(.*?)(?:\s|$)', message)
-                
+
+                step_match = re.search(r"Step-(\d+)-", message)
+                task_match = re.search(r"streamline_task_\d+_(.*?)(?:\s|$)", message)
+
                 if step_match and task_match:
                     step_id = int(step_match.group(1))
                     task_name = task_match.group(1).strip()
                     self.update_task_step_status(task_name, step_id, "processing")
                     return
-            
+
             # 2. 解析处理器开始处理任务的日志（基类统一格式）
             # 格式: "开始处理任务 streamline_task_XXX_taskname - 步骤: stepname"
-            elif "开始处理任务" in message and "streamline_task_" in message and "步骤:" in message:
+            elif (
+                "开始处理任务" in message
+                and "streamline_task_" in message
+                and "步骤:" in message
+            ):
                 import re
-                task_match = re.search(r'开始处理任务 streamline_task_\d+_(.*?) - 步骤: (\w+)', message)
-                
+
+                task_match = re.search(
+                    r"开始处理任务 streamline_task_\d+_(.*?) - 步骤: (\w+)", message
+                )
+
                 if task_match:
                     task_name = task_match.group(1).strip()
                     step_name = task_match.group(2)
-                    
+
                     # 将步骤名映射到步骤ID
                     step_name_to_id = {
                         "preprocess_subtitle": 0,
@@ -1261,84 +1275,114 @@ class DubbingGUI(QMainWindow):
                         "align_audio": 4,
                         "generate_aligned_srt": 5,
                         "process_video_speed": 6,
-                        "merge_audio_video": 7
+                        "merge_audio_video": 7,
                     }
-                    
+
                     step_id = step_name_to_id.get(step_name)
                     if step_id is not None:
                         self.update_task_step_status(task_name, step_id, "processing")
                     return
-            
+
             # 3. 解析各步骤的自定义开始日志（处理器内部日志）
             # 这些日志可能不包含完整的task_id，需要推断当前正在处理的任务
             elif "开始" in message:
                 import re
+
                 step_keywords = {
                     "开始预处理字幕": 0,
-                    "开始媒体分离": 1, 
+                    "开始媒体分离": 1,
                     "开始生成参考音频": 2,
                     "开始TTS生成": 3,
                     "开始音频对齐": 4,
                     "开始生成对齐字幕": 5,
                     "开始视频速度调整": 6,
-                    "开始音视频合并": 7
+                    "开始音视频合并": 7,
                 }
-                
+
                 # 检查是否匹配任何步骤关键词
                 for keyword, step_id in step_keywords.items():
                     if keyword in message:
                         # 如果消息包含streamline_task_，提取任务名
                         if "streamline_task_" in message:
-                            task_match = re.search(r'streamline_task_\d+_(.*?)(?:\s|:|$)', message)
+                            task_match = re.search(
+                                r"streamline_task_\d+_(.*?)(?:\s|:|$)", message
+                            )
                             if task_match:
                                 task_name = task_match.group(1).strip()
-                                self.update_task_step_status(task_name, step_id, "processing")
+                                self.update_task_step_status(
+                                    task_name, step_id, "processing"
+                                )
                         else:
                             # 如果没有task_id，更新所有可能正在此步骤的任务
                             self.update_current_step_tasks_status(step_id, "processing")
                         return
-                
+
                 # 4. 通用的开始处理检测（包含streamline_task_的其他开始日志）
                 if "streamline_task_" in message:
-                    task_match = re.search(r'streamline_task_\d+_(.*?)(?:\s|:|$)', message)
+                    task_match = re.search(
+                        r"streamline_task_\d+_(.*?)(?:\s|:|$)", message
+                    )
                     if task_match:
                         task_name = task_match.group(1).strip()
-                        
+
                         # 根据消息内容推断步骤
                         if any(word in message for word in ["TTS生成", "generate_tts"]):
                             self.update_task_step_status(task_name, 3, "processing")
-                        elif any(word in message for word in ["参考音频", "generate_reference_audio"]):
+                        elif any(
+                            word in message
+                            for word in ["参考音频", "generate_reference_audio"]
+                        ):
                             self.update_task_step_status(task_name, 2, "processing")
-                        elif any(word in message for word in ["媒体分离", "separate_media"]):
+                        elif any(
+                            word in message for word in ["媒体分离", "separate_media"]
+                        ):
                             self.update_task_step_status(task_name, 1, "processing")
-                        elif any(word in message for word in ["字幕预处理", "preprocess_subtitle"]):
+                        elif any(
+                            word in message
+                            for word in ["字幕预处理", "preprocess_subtitle"]
+                        ):
                             self.update_task_step_status(task_name, 0, "processing")
-                        elif any(word in message for word in ["音频对齐", "align_audio"]):
+                        elif any(
+                            word in message for word in ["音频对齐", "align_audio"]
+                        ):
                             self.update_task_step_status(task_name, 4, "processing")
-                        elif any(word in message for word in ["对齐字幕", "generate_aligned_srt"]):
+                        elif any(
+                            word in message
+                            for word in ["对齐字幕", "generate_aligned_srt"]
+                        ):
                             self.update_task_step_status(task_name, 5, "processing")
-                        elif any(word in message for word in ["视频调速", "视频速度", "process_video_speed"]):
+                        elif any(
+                            word in message
+                            for word in ["视频调速", "视频速度", "process_video_speed"]
+                        ):
                             self.update_task_step_status(task_name, 6, "processing")
-                        elif any(word in message for word in ["合并", "merge_audio_video"]):
+                        elif any(
+                            word in message for word in ["合并", "merge_audio_video"]
+                        ):
                             self.update_task_step_status(task_name, 7, "processing")
                     return
-            
+
             # 5. 简化的开始处理检测 - 检测TTS相关日志
-            elif ("开始TTS生成" in message or "gradio_api" in message.lower()) and hasattr(self, 'status_table'):
+            elif (
+                "开始TTS生成" in message or "gradio_api" in message.lower()
+            ) and hasattr(self, "status_table"):
                 # 没有具体任务名的情况下，尝试更新所有正在第3步的任务
                 self.update_processing_tasks_status()
                 return
-            
+
             # 6. 解析任务完成的日志
             # 格式: "任务 streamline_task_XXX_taskname 步骤 stepname 处理成功"
             elif "处理成功" in message and "streamline_task_" in message:
                 import re
-                task_match = re.search(r'任务 streamline_task_\d+_(.*?) 步骤 (\w+) 处理成功', message)
-                
+
+                task_match = re.search(
+                    r"任务 streamline_task_\d+_(.*?) 步骤 (\w+) 处理成功", message
+                )
+
                 if task_match:
                     task_name = task_match.group(1).strip()
                     step_name = task_match.group(2)
-                    
+
                     # 将步骤名映射到步骤ID
                     step_name_to_id = {
                         "preprocess_subtitle": 0,
@@ -1348,56 +1392,76 @@ class DubbingGUI(QMainWindow):
                         "align_audio": 4,
                         "generate_aligned_srt": 5,
                         "process_video_speed": 6,
-                        "merge_audio_video": 7
+                        "merge_audio_video": 7,
                     }
-                    
+
                     step_id = step_name_to_id.get(step_name)
                     if step_id is not None:
                         self.update_task_step_status(task_name, step_id, "completed")
                 return
-            
+
             # 7. 解析步骤完成的日志（处理器内部完成日志）
-            elif any(keyword in message for keyword in [
-                "字幕预处理完成", "媒体分离完成", "参考音频生成完成", "TTS生成完成",
-                "音频对齐完成", "对齐字幕生成完成", "视频速度调整完成", "音视频合并完成"
-            ]):
+            elif any(
+                keyword in message
+                for keyword in [
+                    "字幕预处理完成",
+                    "媒体分离完成",
+                    "参考音频生成完成",
+                    "TTS生成完成",
+                    "音频对齐完成",
+                    "对齐字幕生成完成",
+                    "视频速度调整完成",
+                    "音视频合并完成",
+                ]
+            ):
                 # 这些完成日志通常紧跟在处理日志之后，可以用来确认完成状态
                 # 但由于没有task_id，我们依赖前面的基类完成日志来更新状态
                 return
-                
+
             # 8. 解析任务失败的日志
             # 格式: "任务 streamline_task_XXX_taskname 在队列 step_X_stepname 处理失败"
             elif "处理失败" in message and "streamline_task_" in message:
                 import re
-                task_match = re.search(r'任务 streamline_task_\d+_(.*?) 在队列 step_(\d+)_', message)
-                
+
+                task_match = re.search(
+                    r"任务 streamline_task_\d+_(.*?) 在队列 step_(\d+)_", message
+                )
+
                 if task_match:
                     task_name = task_match.group(1).strip()
                     step_id = int(task_match.group(2))
                     self.update_task_step_status(task_name, step_id, "failed")
                 return
-                    
+
         except Exception as e:
             # 不要让日志解析错误影响GUI运行
             pass
-    
+
     def update_current_step_tasks_status(self, step_id: int, status: str):
         """更新指定步骤的所有相关任务状态 - 用于处理没有task_id的日志"""
         try:
-            if not hasattr(self, 'status_table'):
+            if not hasattr(self, "status_table"):
                 return
-                
+
             # 查找所有可能正在处理此步骤的任务
             for row in range(self.status_table.rowCount()):
                 # 检查前一个步骤是否已完成，当前步骤是否未开始
                 if step_id > 0:
-                    prev_step_item = self.status_table.item(row, step_id)  # 前一步的列索引
-                    curr_step_item = self.status_table.item(row, step_id + 1)  # 当前步的列索引
-                    
+                    prev_step_item = self.status_table.item(
+                        row, step_id
+                    )  # 前一步的列索引
+                    curr_step_item = self.status_table.item(
+                        row, step_id + 1
+                    )  # 当前步的列索引
+
                     # 如果前一步已完成，当前步未开始，则更新当前步为处理中
-                    if (prev_step_item and prev_step_item.text() == "✅" and
-                        curr_step_item and curr_step_item.text() == "⏸️"):
-                        
+                    if (
+                        prev_step_item
+                        and prev_step_item.text() == "✅"
+                        and curr_step_item
+                        and curr_step_item.text() == "⏸️"
+                    ):
+
                         video_item = self.status_table.item(row, 0)
                         if video_item:
                             video_name = Path(video_item.text()).stem
@@ -1410,37 +1474,41 @@ class DubbingGUI(QMainWindow):
                         if video_item:
                             video_name = Path(video_item.text()).stem
                             self.update_task_step_status(video_name, step_id, status)
-                        
+
         except Exception as e:
             self.logger.error(f"更新当前步骤任务状态失败: {e}")
 
     def update_processing_tasks_status(self):
         """更新正在处理的任务状态 - 当无法从日志中提取具体任务名时使用"""
         try:
-            if not hasattr(self, 'status_table'):
+            if not hasattr(self, "status_table"):
                 return
-                
+
             # 查找已完成前3个步骤但第4步还未开始的任务，将其第4步设为处理中
             for row in range(self.status_table.rowCount()):
                 step2_item = self.status_table.item(row, 3)  # 步骤2 (列索引3)
                 step3_item = self.status_table.item(row, 4)  # 步骤3 (列索引4)
-                
+
                 # 如果步骤2已完成，步骤3还未开始，则设置步骤3为处理中
-                if (step2_item and step2_item.text() == "✅" and 
-                    step3_item and step3_item.text() == "⏸️"):
-                    
+                if (
+                    step2_item
+                    and step2_item.text() == "✅"
+                    and step3_item
+                    and step3_item.text() == "⏸️"
+                ):
+
                     video_item = self.status_table.item(row, 0)
                     if video_item:
                         video_name = Path(video_item.text()).stem
                         self.update_task_step_status(video_name, 3, "processing")
-                        
+
         except Exception as e:
             pass
-    
+
     def test_status_update(self):
         """测试状态更新功能"""
         # 手动测试状态更新
-        if hasattr(self, 'status_table') and self.status_table.rowCount() > 0:
+        if hasattr(self, "status_table") and self.status_table.rowCount() > 0:
             # 获取第一行的视频文件名作为测试
             video_item = self.status_table.item(0, 0)
             if video_item:
@@ -1551,20 +1619,26 @@ class DubbingGUI(QMainWindow):
             video_name = Path(video_path).name
             video_item = QTableWidgetItem(video_name)
             video_item.setToolTip(video_path)
-            video_item.setFlags(video_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+            video_item.setFlags(
+                video_item.flags() & ~Qt.ItemIsEditable
+            )  # 设置为不可编辑
             self.file_table.setItem(i, 0, video_item)
 
             # 字幕文件名（现在一定有匹配的字幕）
             subtitle_name = Path(subtitle_path).name
             subtitle_item = QTableWidgetItem(subtitle_name)
             subtitle_item.setToolTip(subtitle_path)
-            subtitle_item.setFlags(subtitle_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+            subtitle_item.setFlags(
+                subtitle_item.flags() & ~Qt.ItemIsEditable
+            )  # 设置为不可编辑
             self.file_table.setItem(i, 1, subtitle_item)
 
             # 状态（现在一定是就绪状态）
             status_item = QTableWidgetItem("就绪")
             status_item.setForeground(QColor("#198754"))  # 绿色
-            status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+            status_item.setFlags(
+                status_item.flags() & ~Qt.ItemIsEditable
+            )  # 设置为不可编辑
             self.file_table.setItem(i, 2, status_item)
 
             # 选择框
@@ -1572,10 +1646,12 @@ class DubbingGUI(QMainWindow):
             checkbox.setChecked(True)  # 现在所有项都有字幕，默认全选
             self.file_table.setCellWidget(i, 3, checkbox)
 
-    def update_task_step_status(self, task_name: str, step_id: int, status: str, message: str = ""):
+    def update_task_step_status(
+        self, task_name: str, step_id: int, status: str, message: str = ""
+    ):
         """
         更新特定任务的步骤状态
-        
+
         Args:
             task_name: 任务名称（通常是视频文件名，不含扩展名）
             step_id: 步骤ID (0-7)
@@ -1586,7 +1662,7 @@ class DubbingGUI(QMainWindow):
             # 查找任务在状态表格中的行索引
             task_row = -1
             matched_method = "unknown"
-            
+
             # 先尝试完全精确匹配（最优先）
             for i in range(self.status_table.rowCount()):
                 video_item = self.status_table.item(i, 0)
@@ -1596,21 +1672,24 @@ class DubbingGUI(QMainWindow):
                         task_row = i
                         matched_method = "exact"
                         break
-            
+
             # 如果精确匹配失败，尝试去掉特殊字符后精确匹配（第二优先）
             if task_row == -1:
                 import re
-                clean_task_name = re.sub(r'[^\w\u4e00-\u9fff]', '', task_name)  # 只保留字母、数字、中文
+
+                clean_task_name = re.sub(
+                    r"[^\w\u4e00-\u9fff]", "", task_name
+                )  # 只保留字母、数字、中文
                 for i in range(self.status_table.rowCount()):
                     video_item = self.status_table.item(i, 0)
                     if video_item:
                         video_name = Path(video_item.text()).stem
-                        clean_video_name = re.sub(r'[^\w\u4e00-\u9fff]', '', video_name)
+                        clean_video_name = re.sub(r"[^\w\u4e00-\u9fff]", "", video_name)
                         if clean_task_name == clean_video_name:
                             task_row = i
                             matched_method = "clean_exact"
                             break
-            
+
             # 最后才尝试包含匹配（容易误匹配，降低优先级）
             if task_row == -1:
                 for i in range(self.status_table.rowCount()):
@@ -1618,11 +1697,13 @@ class DubbingGUI(QMainWindow):
                     if video_item:
                         video_name = Path(video_item.text()).stem
                         # 只有在task_name较长时才使用包含匹配，避免误匹配
-                        if len(task_name) > 5 and (task_name in video_name or video_name in task_name):
+                        if len(task_name) > 5 and (
+                            task_name in video_name or video_name in task_name
+                        ):
                             task_row = i
                             matched_method = "contains"
                             break
-            
+
             if task_row == -1:
                 self.logger.warning(f"未找到任务 {task_name} 在状态表格中的对应行")
                 # 添加调试信息，显示所有可用的视频文件名
@@ -1633,22 +1714,26 @@ class DubbingGUI(QMainWindow):
                         available_names.append(Path(item.text()).stem)
                 self.logger.debug(f"可用的视频文件名: {available_names}")
                 return
-            
-            self.logger.debug(f"找到匹配行: task_name={task_name}, task_row={task_row}, method={matched_method}")
-            
+
+            self.logger.debug(
+                f"找到匹配行: task_name={task_name}, task_row={task_row}, method={matched_method}"
+            )
+
             # 更新步骤状态（列索引 1-8）
             step_col = 1 + step_id
             step_item = self.status_table.item(task_row, step_col)
-            
+
             if not step_item:
                 step_item = QTableWidgetItem()
-                step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+                step_item.setFlags(
+                    step_item.flags() & ~Qt.ItemIsEditable
+                )  # 设置为不可编辑
                 self.status_table.setItem(task_row, step_col, step_item)
-            
+
             # 检查是否需要更新状态（避免重复更新）
             current_status_icon = step_item.text()
             new_status_icon = ""
-            
+
             # 设置状态图标和颜色
             if status == "processing":
                 new_status_icon = "🔄"  # 处理中
@@ -1662,103 +1747,125 @@ class DubbingGUI(QMainWindow):
                 new_status_icon = "❌"  # 失败
                 color = QColor("#dc3545")  # 红色
                 tooltip = f"步骤{step_id + 1}: 失败"
-                
+
                 # 当步骤失败时，将后续步骤重置为未开始状态
                 self._reset_subsequent_steps(task_row, step_id)
             else:
                 new_status_icon = "⏸️"  # 未开始
                 color = QColor("#6c757d")  # 灰色
                 tooltip = f"步骤{step_id + 1}: 未开始"
-            
+
             # 只有在状态真正改变时才更新，并检查状态降级保护
             should_update = False
-            
+
             if current_status_icon != new_status_icon:
                 # 状态优先级：✅完成 > ❌失败 > 🔄处理中 > ⏸️未开始
                 status_priority = {"✅": 3, "❌": 2, "🔄": 1, "⏸️": 0}
                 current_priority = status_priority.get(current_status_icon, 0)
                 new_priority = status_priority.get(new_status_icon, 0)
-                
+
                 # 防止状态降级（除非是失败状态）
                 if new_priority >= current_priority or new_status_icon == "❌":
                     should_update = True
-                    self.logger.debug(f"状态变化: task_name={task_name}, step={step_id}, {current_status_icon} -> {new_status_icon}")
+                    self.logger.debug(
+                        f"状态变化: task_name={task_name}, step={step_id}, {current_status_icon} -> {new_status_icon}"
+                    )
                 else:
-                    self.logger.warning(f"阻止状态降级: task_name={task_name}, step={step_id}, {current_status_icon} -> {new_status_icon}")
-            
+                    self.logger.warning(
+                        f"阻止状态降级: task_name={task_name}, step={step_id}, {current_status_icon} -> {new_status_icon}"
+                    )
+
             if should_update:
                 step_item.setText(new_status_icon)
                 step_item.setForeground(color)
-                
+
                 if message:
                     tooltip += f" - {message}"
-                
+
                 step_item.setToolTip(tooltip)
                 step_item.setTextAlignment(Qt.AlignCenter)
-                
+
                 # 更新整体状态
                 self.update_overall_task_status(task_row)
             else:
-                self.logger.debug(f"状态无变化或被保护，跳过更新: task_name={task_name}, step={step_id}, current={current_status_icon}, new={new_status_icon}")
-            
+                self.logger.debug(
+                    f"状态无变化或被保护，跳过更新: task_name={task_name}, step={step_id}, current={current_status_icon}, new={new_status_icon}"
+                )
+
         except Exception as e:
             self.logger.error(f"更新任务步骤状态失败: {e}")
 
-    def update_step_status_direct(self, task_id: str, step_id: int, status: str, message: str = ""):
+    def update_step_status_direct(
+        self, task_id: str, step_id: int, status: str, message: str = ""
+    ):
         """直接更新状态，不依赖日志解析（最高优先级）"""
         try:
             # 从task_id提取任务名: streamline_task_XXX_videoname
-            parts = task_id.split('_')
+            parts = task_id.split("_")
             if len(parts) >= 3:
-                task_name = '_'.join(parts[2:])  # 取videoname部分
+                task_name = "_".join(parts[2:])  # 取videoname部分
             else:
                 task_name = task_id
-            
+
             # 添加调试信息
-            self.logger.debug(f"直接状态更新: task_id={task_id}, task_name={task_name}, step_id={step_id}, status={status}")
-            
+            self.logger.debug(
+                f"直接状态更新: task_id={task_id}, task_name={task_name}, step_id={step_id}, status={status}"
+            )
+
             # 立即更新状态
             self.update_task_step_status(task_name, step_id, status, message)
-            
+
             # 强制刷新界面
             QApplication.processEvents()
-            
+
         except Exception as e:
             self.logger.error(f"直接状态更新失败: {e}")
-            self.logger.debug(f"失败的参数: task_id={task_id}, step_id={step_id}, status={status}")
-    
+            self.logger.debug(
+                f"失败的参数: task_id={task_id}, step_id={step_id}, status={status}"
+            )
+
     def _reset_subsequent_steps(self, task_row: int, failed_step_id: int):
         """
         重置失败步骤之后的所有步骤为未开始状态
-        
+
         Args:
             task_row: 任务在表格中的行索引
             failed_step_id: 失败的步骤ID
         """
         try:
             step_names = [
-                "字幕预处理", "媒体分离", "参考音频", "TTS生成",
-                "音频对齐", "对齐字幕", "视频调速", "合并输出"
+                "字幕预处理",
+                "媒体分离",
+                "参考音频",
+                "TTS生成",
+                "音频对齐",
+                "对齐字幕",
+                "视频调速",
+                "合并输出",
             ]
-            
+
             # 重置失败步骤之后的所有步骤
             for step_id in range(failed_step_id + 1, 8):
                 step_col = 1 + step_id
                 step_item = self.status_table.item(task_row, step_col)
-                
+
                 if not step_item:
                     step_item = QTableWidgetItem()
-                    step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+                    step_item.setFlags(
+                        step_item.flags() & ~Qt.ItemIsEditable
+                    )  # 设置为不可编辑
                     self.status_table.setItem(task_row, step_col, step_item)
-                
+
                 step_item.setText("⏸️")  # 未开始
                 step_item.setForeground(QColor("#6c757d"))  # 灰色
-                step_item.setToolTip(f"步骤{step_id + 1}: {step_names[step_id]} - 未开始")
+                step_item.setToolTip(
+                    f"步骤{step_id + 1}: {step_names[step_id]} - 未开始"
+                )
                 step_item.setTextAlignment(Qt.AlignCenter)
-                
+
         except Exception as e:
             self.logger.error(f"重置后续步骤状态失败: {e}")
-    
+
     def update_overall_task_status(self, row: int):
         """更新任务的整体状态"""
         try:
@@ -1766,7 +1873,7 @@ class DubbingGUI(QMainWindow):
             completed_steps = 0
             failed_steps = 0
             processing_steps = 0
-            
+
             for step_idx in range(8):
                 step_col = 1 + step_idx
                 step_item = self.status_table.item(row, step_col)
@@ -1778,21 +1885,25 @@ class DubbingGUI(QMainWindow):
                         failed_steps += 1
                     elif text == "🔄":
                         processing_steps += 1
-            
+
             # 更新整体状态列（列索引 9）
             status_item = self.status_table.item(row, 9)
             if not status_item:
                 status_item = QTableWidgetItem()
-                status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+                status_item.setFlags(
+                    status_item.flags() & ~Qt.ItemIsEditable
+                )  # 设置为不可编辑
                 self.status_table.setItem(row, 9, status_item)
-            
+
             # 更新进度列（列索引 10）
             progress_item = self.status_table.item(row, 10)
             if not progress_item:
                 progress_item = QTableWidgetItem()
-                progress_item.setFlags(progress_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+                progress_item.setFlags(
+                    progress_item.flags() & ~Qt.ItemIsEditable
+                )  # 设置为不可编辑
                 self.status_table.setItem(row, 10, progress_item)
-            
+
             # 设置状态和进度
             if failed_steps > 0:
                 status_item.setText("失败")
@@ -1819,9 +1930,9 @@ class DubbingGUI(QMainWindow):
                 status_item.setForeground(QColor("#198754"))  # 绿色
                 progress_item.setText("0/8")
                 progress_item.setForeground(QColor("#6c757d"))
-                
+
             progress_item.setTextAlignment(Qt.AlignCenter)
-                
+
         except Exception as e:
             self.logger.error(f"更新整体任务状态失败: {e}")
 
@@ -1835,18 +1946,26 @@ class DubbingGUI(QMainWindow):
                 video_name = Path(video_path).name
                 video_item = QTableWidgetItem(video_name)
                 video_item.setToolTip(video_path)
-                video_item.setFlags(video_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+                video_item.setFlags(
+                    video_item.flags() & ~Qt.ItemIsEditable
+                )  # 设置为不可编辑
                 self.status_table.setItem(i, 0, video_item)
 
                 # 步骤名称
                 step_names = [
-                    "字幕预处理", "媒体分离", "参考音频", "TTS生成",
-                    "音频对齐", "对齐字幕", "视频调速", "合并输出"
+                    "字幕预处理",
+                    "媒体分离",
+                    "参考音频",
+                    "TTS生成",
+                    "音频对齐",
+                    "对齐字幕",
+                    "视频调速",
+                    "合并输出",
                 ]
-                
+
                 # 尝试加载缓存状态
                 cached_status = self._load_cached_task_status(video_path)
-                
+
                 # 初始化8个步骤状态列（列索引 1-8）
                 for step_idx in range(8):
                     if cached_status and step_idx in cached_status:
@@ -1855,82 +1974,92 @@ class DubbingGUI(QMainWindow):
                         if step_status == "completed":
                             step_item = QTableWidgetItem("✅")
                             step_item.setForeground(QColor("#198754"))  # 绿色
-                            tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 已完成"
+                            tooltip = (
+                                f"步骤{step_idx + 1}: {step_names[step_idx]} - 已完成"
+                            )
                         elif step_status == "failed":
                             step_item = QTableWidgetItem("❌")
                             step_item.setForeground(QColor("#dc3545"))  # 红色
-                            tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 失败"
+                            tooltip = (
+                                f"步骤{step_idx + 1}: {step_names[step_idx]} - 失败"
+                            )
                         elif step_status == "processing":
                             step_item = QTableWidgetItem("🔄")
                             step_item.setForeground(QColor("#fd7e14"))  # 橙色
-                            tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 处理中"
+                            tooltip = (
+                                f"步骤{step_idx + 1}: {step_names[step_idx]} - 处理中"
+                            )
                         else:
                             step_item = QTableWidgetItem("⏸️")
                             step_item.setForeground(QColor("#6c757d"))  # 灰色
-                            tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 未开始"
+                            tooltip = (
+                                f"步骤{step_idx + 1}: {step_names[step_idx]} - 未开始"
+                            )
                     else:
                         # 默认未开始状态
                         step_item = QTableWidgetItem("⏸️")
                         step_item.setForeground(QColor("#6c757d"))  # 灰色
                         tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 未开始"
-                    
+
                     step_item.setToolTip(tooltip)
                     step_item.setTextAlignment(Qt.AlignCenter)
-                    step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+                    step_item.setFlags(
+                        step_item.flags() & ~Qt.ItemIsEditable
+                    )  # 设置为不可编辑
                     self.status_table.setItem(i, 1 + step_idx, step_item)
 
                 # 更新整体状态
                 self.update_overall_task_status(i)
-                
+
         except Exception as e:
             self.logger.error(f"初始化状态表格失败: {e}")
 
     def _load_cached_task_status(self, video_path: str) -> Optional[Dict[int, str]]:
         """
         加载缓存中的任务状态
-        
+
         Args:
             video_path: 视频文件路径
-            
+
         Returns:
             步骤状态字典 {step_id: status} 或 None
         """
         try:
             from core.cache import TaskCacheManager
             from core.util import sanitize_filename
-            
+
             # 构建缓存文件路径 - 需要与pipeline中的路径一致
             video_path_obj = Path(video_path)
             clean_name = sanitize_filename(video_path_obj.stem)
             output_dir = video_path_obj.parent / "outputs" / clean_name
-            
+
             # 使用pipeline_cache命名规则
             cache_file = output_dir / f"{video_path_obj.stem}_pipeline_cache.json"
-            
+
             self.logger.debug(f"尝试加载缓存文件: {cache_file}")
-            
+
             if not cache_file.exists():
                 self.logger.debug(f"缓存文件不存在: {cache_file}")
                 return None
-            
+
             # 加载缓存
             cache_manager = TaskCacheManager()
             cache_data = cache_manager.load_task_cache(cache_file, video_path)
-            
+
             if not cache_data:
                 self.logger.debug("缓存数据为空")
                 return None
-            
+
             task_data = cache_data.get("task", {})
             step_details = task_data.get("step_details", {})
             step_results = task_data.get("step_results", {})
-            
+
             self.logger.debug(f"加载的步骤详情: {list(step_details.keys())}")
             self.logger.debug(f"加载的步骤结果: {list(step_results.keys())}")
-            
+
             # 转换为GUI需要的格式
             status_map = {}
-            
+
             # 首先从step_results获取状态
             for step_id_str, result in step_results.items():
                 try:
@@ -1943,7 +2072,7 @@ class DubbingGUI(QMainWindow):
                         status_map[step_id] = "failed"
                 except (ValueError, TypeError):
                     continue
-            
+
             # 然后从step_details获取状态，覆盖step_results的状态
             for step_id_str, detail in step_details.items():
                 try:
@@ -1952,10 +2081,10 @@ class DubbingGUI(QMainWindow):
                     status_map[step_id] = status
                 except (ValueError, TypeError):
                     continue
-            
+
             self.logger.debug(f"最终状态映射: {status_map}")
             return status_map if status_map else None
-            
+
         except Exception as e:
             self.logger.debug(f"加载缓存状态失败: {e}")
             return None
@@ -2015,11 +2144,13 @@ class DubbingGUI(QMainWindow):
                 return
 
             # 转换为批量处理格式（包含一个文件的列表）
-            video_subtitle_pairs = [(
-                self.current_video_path,
-                self.current_subtitle_path if self.current_subtitle_path else None
-            )]
-            
+            video_subtitle_pairs = [
+                (
+                    self.current_video_path,
+                    self.current_subtitle_path if self.current_subtitle_path else None,
+                )
+            ]
+
             # 调用统一的批量处理方法
             self._start_unified_processing(video_subtitle_pairs, is_single_mode=True)
         else:
@@ -2028,11 +2159,13 @@ class DubbingGUI(QMainWindow):
             if not selected_pairs:
                 QMessageBox.warning(self, "警告", "请至少选择一个要处理的视频！")
                 return
-            
+
             # 调用统一的批量处理方法
             self._start_unified_processing(selected_pairs, is_single_mode=False)
 
-    def _start_unified_processing(self, video_subtitle_pairs: List[Tuple[str, str]], is_single_mode: bool = False):
+    def _start_unified_processing(
+        self, video_subtitle_pairs: List[Tuple[str, str]], is_single_mode: bool = False
+    ):
         """统一的处理方法，支持单文件和批量模式"""
         # 初始化TTS处理器
         api_url = self.api_url_edit.text().strip() or "http://127.0.0.1:7860"
@@ -2045,53 +2178,57 @@ class DubbingGUI(QMainWindow):
         try:
             # 创建统一的批量处理工作线程
             self.worker_thread = StreamlineBatchDubbingWorkerThread(
-                video_subtitle_pairs,
-                True  # 默认从缓存恢复
+                video_subtitle_pairs, True  # 默认从缓存恢复
             )
 
             # 连接信号 - 统一使用批量处理的信号处理
             self.worker_thread.batch_finished.connect(self._unified_processing_finished)
-            
+
             # 初始化状态表格并连接日志信号（单文件和批量模式都显示）
             self.initialize_status_table(video_subtitle_pairs)
             self.worker_thread.log_message.connect(self.append_log_message)
-            
+
             # 启动线程
             self.worker_thread.start()
 
         except Exception as e:
             import traceback
+
             error_msg = f"启动处理失败: {str(e)}\n详细错误:\n{traceback.format_exc()}"
             self.log_text.append(error_msg)
             QMessageBox.critical(self, "错误", error_msg)
-            
+
             # 重置UI状态
             self.start_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
 
-    def _unified_processing_finished(self, success: bool, message: str, result: Dict[str, Any]):
+    def _unified_processing_finished(
+        self, success: bool, message: str, result: Dict[str, Any]
+    ):
         """统一的处理完成回调"""
         try:
             self.log_text.append(f"\n处理完成: {message}")
-            
+
             # 恢复UI状态
             self.start_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
-            
+
             # 根据当前模式显示相应的结果
             if self.current_mode == "single":
                 self._handle_single_mode_result(success, message, result)
             else:
                 self._handle_batch_mode_result(success, message, result)
-                
+
         except Exception as e:
             self.logger.error(f"处理完成回调失败: {e}")
 
-    def _handle_single_mode_result(self, success: bool, message: str, result: Dict[str, Any]):
+    def _handle_single_mode_result(
+        self, success: bool, message: str, result: Dict[str, Any]
+    ):
         """处理单文件模式的结果"""
         if success:
             QMessageBox.information(self, "完成", message)
-            
+
             # 尝试打开输出目录
             if result and result.get("results"):
                 first_result = result["results"][0]
@@ -2100,13 +2237,16 @@ class DubbingGUI(QMainWindow):
                     if output_dir.exists():
                         try:
                             import subprocess
+
                             subprocess.run(["explorer", str(output_dir)], check=False)
                         except Exception as e:
                             self.logger.debug(f"打开输出目录失败: {e}")
         else:
             QMessageBox.critical(self, "处理失败", message)
 
-    def _handle_batch_mode_result(self, success: bool, message: str, result: Dict[str, Any]):
+    def _handle_batch_mode_result(
+        self, success: bool, message: str, result: Dict[str, Any]
+    ):
         """处理批量模式的结果"""
         if success:
             QMessageBox.information(self, "批量处理完成", message)
@@ -2124,9 +2264,7 @@ class DubbingGUI(QMainWindow):
 
     def show_cache_info(self):
         """显示缓存信息"""
-        QMessageBox.information(
-            self, "信息", "请通过日志输出查看缓存相关信息"
-        )
+        QMessageBox.information(self, "信息", "请通过日志输出查看缓存相关信息")
 
     def clear_cache(self):
         """清理缓存"""
@@ -2136,9 +2274,7 @@ class DubbingGUI(QMainWindow):
 
     def repair_cache(self):
         """修复缓存"""
-        QMessageBox.information(
-            self, "信息", "请通过重新处理文件来修复缓存"
-        )
+        QMessageBox.information(self, "信息", "请通过重新处理文件来修复缓存")
 
     def clear_output_directories(self):
         """清理重复的输出目录"""
@@ -2151,47 +2287,47 @@ class DubbingGUI(QMainWindow):
 
         if reply == QMessageBox.Yes:
             try:
-                from pathlib import Path
-                import shutil
                 import re
+                import shutil
                 from datetime import datetime
-                
+                from pathlib import Path
+
                 # 查找可能的outputs目录
                 current_dir = Path.cwd()
                 outputs_dirs = []
-                
+
                 # 在当前目录和父目录中查找outputs目录
                 for search_dir in [current_dir, current_dir.parent]:
                     potential_outputs = search_dir / "outputs"
                     if potential_outputs.exists() and potential_outputs.is_dir():
                         outputs_dirs.append(potential_outputs)
-                
+
                 if not outputs_dirs:
                     QMessageBox.information(self, "信息", "未找到输出目录")
                     return
-                
+
                 # 分析和清理每个outputs目录
                 total_cleaned = 0
                 cleanup_log = []
-                
+
                 for outputs_dir in outputs_dirs:
                     # 获取所有子目录
                     subdirs = [d for d in outputs_dir.iterdir() if d.is_dir()]
-                    
+
                     if not subdirs:
                         continue
-                    
+
                     # 按照统一的文件名清理逻辑分组
                     def _sanitize_filename(filename: str) -> str:
-                        sanitized = re.sub(r'[<>:"/\\\\|?*]', '_', filename)
-                        sanitized = re.sub(r'[@#&%=+]', '_', sanitized)
-                        sanitized = re.sub(r'[.\\-\\s]', '_', sanitized)
-                        sanitized = re.sub(r'_+', '_', sanitized)
-                        sanitized = sanitized.strip('_')
+                        sanitized = re.sub(r'[<>:"/\\\\|?*]', "_", filename)
+                        sanitized = re.sub(r"[@#&%=+]", "_", sanitized)
+                        sanitized = re.sub(r"[.\\-\\s]", "_", sanitized)
+                        sanitized = re.sub(r"_+", "_", sanitized)
+                        sanitized = sanitized.strip("_")
                         if not sanitized:
-                            sanitized = 'unnamed'
+                            sanitized = "unnamed"
                         return sanitized
-                    
+
                     # 将目录按照清理后的名称分组
                     grouped_dirs = {}
                     for subdir in subdirs:
@@ -2199,31 +2335,35 @@ class DubbingGUI(QMainWindow):
                         if clean_name not in grouped_dirs:
                             grouped_dirs[clean_name] = []
                         grouped_dirs[clean_name].append(subdir)
-                    
+
                     # 清理重复目录
                     for clean_name, dirs in grouped_dirs.items():
                         if len(dirs) > 1:
                             # 按修改时间排序，保留最新的
                             dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
                             keep_dir = dirs[0]
-                            
+
                             for remove_dir in dirs[1:]:
                                 try:
                                     shutil.rmtree(remove_dir)
                                     cleanup_log.append(f"删除: {remove_dir.name}")
                                     total_cleaned += 1
                                 except Exception as e:
-                                    cleanup_log.append(f"删除失败 {remove_dir.name}: {e}")
-                            
+                                    cleanup_log.append(
+                                        f"删除失败 {remove_dir.name}: {e}"
+                                    )
+
                             cleanup_log.append(f"保留: {keep_dir.name} (最新)")
-                
+
                 # 显示清理结果
                 if total_cleaned > 0:
-                    result_msg = f"清理完成！删除了 {total_cleaned} 个重复目录。\\n\\n详细信息:\\n" + "\\n".join(cleanup_log[-10:])  # 只显示最后10条
+                    result_msg = f"清理完成！删除了 {total_cleaned} 个重复目录。\\n\\n详细信息:\\n" + "\\n".join(
+                        cleanup_log[-10:]
+                    )  # 只显示最后10条
                     QMessageBox.information(self, "清理完成", result_msg)
                 else:
                     QMessageBox.information(self, "清理完成", "未发现重复的输出目录")
-                    
+
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"清理输出目录失败: {str(e)}")
 
@@ -2232,7 +2372,7 @@ class DubbingGUI(QMainWindow):
         try:
             # 处理用户输入的API URL格式
             processed_url = self._process_api_url(api_url)
-            
+
             self.log_message.emit(f"正在初始化TTS处理器，API地址: {processed_url}")
             initialize_tts_processor(processed_url)
             self.log_message.emit("TTS处理器初始化成功")
@@ -2240,23 +2380,23 @@ class DubbingGUI(QMainWindow):
             error_msg = f"TTS处理器初始化失败: {str(e)}"
             self.log_message.emit(error_msg)
             QMessageBox.warning(self, "警告", error_msg)
-    
+
     def _process_api_url(self, api_url: str) -> str:
         """处理API URL格式，确保格式正确"""
         if not api_url or api_url.strip() == "":
             return "http://127.0.0.1:7860"
-        
+
         api_url = api_url.strip()
-        
+
         # 如果用户只输入了IP:端口格式，自动添加http://前缀
-        if not api_url.startswith(('http://', 'https://')):
+        if not api_url.startswith(("http://", "https://")):
             # 检查是否是IP:端口格式
-            if ':' in api_url and not api_url.startswith('//'):
+            if ":" in api_url and not api_url.startswith("//"):
                 api_url = f"http://{api_url}"
             else:
                 # 如果格式不明确，使用默认值
                 api_url = "http://127.0.0.1:7860"
-        
+
         return api_url
 
     def clear_log(self):
@@ -2285,38 +2425,41 @@ def main():
     """主函数"""
     try:
         app = QApplication(sys.argv)
-        
+
         # 设置应用程序属性
         app.setApplicationName("DubbingX")
         app.setApplicationVersion("1.0.0")
         app.setOrganizationName("DubbingX Team")
-        
+
         # 设置应用程序退出时的行为
         app.setQuitOnLastWindowClosed(True)
-        
+
         # 创建主窗口
         window = DubbingGUI()
         window.show()
-        
+
         # 设置简单的信号处理
-        import signal
+        import signal as sig
+
         def signal_handler(signum, frame):
             print(f"\n收到系统信号 {signum}，立即退出...")
             import os
+
             os._exit(0)
-        
-        signal.signal(signal.SIGINT, signal_handler)
-        if hasattr(signal, 'SIGTERM'):
-            signal.signal(signal.SIGTERM, signal_handler)
-        
+
+        sig.signal(sig.SIGINT, signal_handler)
+        if hasattr(sig, "SIGTERM"):
+            sig.signal(sig.SIGTERM, signal_handler)
+
         # 运行应用程序
         app.exec()
-        
+
     except Exception as e:
         print(f"应用程序启动失败: {e}")
-    
+
     # 最终确保退出
     import os
+
     print("主函数结束，强制退出进程")
     os._exit(0)
 

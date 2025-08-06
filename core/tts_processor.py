@@ -1,7 +1,4 @@
-"""
-TTS处理器
-直接基于Gradio客户端实现Index-TTS声音克隆功能
-"""
+"""TTS处理器 - 基于Gradio客户端实现Index-TTS声音克隆功能"""
 
 import datetime
 import json
@@ -18,142 +15,165 @@ from gradio_client import Client, handle_file
 
 
 class TTSProcessor:
-    """独立TTS处理器，直接基于Gradio客户端实现声音克隆"""
+    """TTS处理器 - 基于Gradio客户端实现声音克隆"""
 
     def __init__(self, api_url: str = "http://127.0.0.1:7860"):
         self.logger = logging.getLogger(__name__)
-
-        # Index-TTS API配置
         self.api_url = api_url
         self.gradio_client = None
-
-        # 获取Gradio临时目录
-        self.gradio_temp_dir = TTSProcessor._get_gradio_temp_dir()
-
-        # 初始化Gradio客户端
+        self.gradio_temp_dir = self._get_gradio_temp_dir()
         self._initialize_gradio_client()
 
     def generate_tts_from_reference(
         self, reference_results_path: str, output_dir: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        根据参考音频结果生成TTS语音
-
-        Args:
-            reference_results_path: 参考音频结果JSON文件路径
-            output_dir: TTS输出目录，默认为JSON文件所在目录下的tts_output
-
-        Returns:
-            包含TTS生成结果的字典
-        """
-        try:
-            # 验证输入文件
-            if not os.path.exists(reference_results_path):
-                return {
-                    "success": False,
-                    "error": f"参考音频结果文件不存在: {reference_results_path}",
-                }
-
-            # 加载参考音频结果
-            reference_data = self._load_reference_results(reference_results_path)
-            if not reference_data:
-                return {"success": False, "error": "参考音频结果文件加载失败"}
-
-            # 设置输出目录
-            if output_dir is None:
-                output_dir = Path(reference_results_path).parent.parent / "tts_output"
-            else:
-                output_dir = Path(output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            # 检查缓存
-            cache_results = self._check_tts_cache(
-                reference_results_path, str(output_dir)
-            )
-            if cache_results:
-                self.logger.info("找到有效的TTS缓存，直接返回结果")
-                return cache_results
-
-            self.logger.info(f"开始TTS语音生成: {reference_results_path}")
-
-            # 检查Gradio客户端是否可用
-            if self.gradio_client is None:
-                self.logger.error("Gradio客户端未初始化或初始化失败，无法进行TTS生成")
-                return {
-                    "success": False,
-                    "error": "Gradio客户端未初始化，请检查TTS服务是否正常运行",
-                    "tts_audio_segments": [],
-                    "output_dir": str(output_dir),
-                    "total_segments": 0,
-                    "total_requested": len(reference_segments),
-                    "reference_file": reference_results_path,
-                }
-
-            # 获取参考音频片段
-            reference_segments = reference_data.get("reference_audio_segments", [])
-            if not reference_segments:
-                return {"success": False, "error": "参考音频片段为空"}
-
-            self.logger.info(f"找到 {len(reference_segments)} 个参考音频片段")
-
-            # 生成TTS音频片段
-            tts_segments = []
-            successful_segments = 0
-
-            for segment in reference_segments:
-                try:
-                    tts_result = self._generate_single_tts(segment, output_dir)
-                    if tts_result:
-                        tts_segments.append(tts_result)
-                        successful_segments += 1
-                        self.logger.debug(f"TTS生成成功: 片段 {segment['index']}")
-                    else:
-                        self.logger.warning(f"TTS生成失败: 片段 {segment['index']}")
-
-                except Exception as e:
-                    self.logger.error(f"处理片段 {segment['index']} 时出错: {str(e)}")
-                    continue
-
-            self.logger.info(
-                f"TTS生成完成: {successful_segments}/{len(reference_segments)} 个片段成功"
+        """根据参考音频结果生成TTS语音"""
+        if not os.path.exists(reference_results_path):
+            return self._create_error_result(
+                f"参考音频结果文件不存在: {reference_results_path}"
             )
 
-            # 判断是否成功：至少需要生成一个有效片段
-            is_success = successful_segments > 0
-            if not is_success:
-                self.logger.error("TTS生成失败：没有成功生成任何音频片段")
+        reference_data = self._load_reference_results(reference_results_path)
+        if not reference_data:
+            return self._create_error_result("参考音频结果文件加载失败")
 
-            # 构建结果
-            results = {
-                "success": is_success,
-                "tts_audio_segments": tts_segments,
-                "output_dir": str(output_dir),
-                "total_segments": len(reference_segments),  # 修复：应该是总数
-                "successful_segments": successful_segments,  # 添加：成功的片段数
-                "failed_segments": len(reference_segments) - successful_segments,  # 添加：失败的片段数
-                "total_requested": len(reference_segments),
-                "reference_file": reference_results_path,
-                "generation_info": {
-                    "device": "api_client",
-                    "model_type": self._get_model_info(),
-                    "api_url": self.api_url,
-                    "gradio_available": True,
-                    "segments_generated": successful_segments,
-                    "segments_failed": len(reference_segments) - successful_segments,
-                },
-            }
+        output_dir = self._setup_output_dir(reference_results_path, output_dir)
 
-            # 保存TTS结果并获取保存路径
-            results_file_path = self._save_tts_results(results, output_dir)
-            
-            # 添加结果文件路径到返回结果中
-            results["results_file"] = str(results_file_path)
+        # 检查缓存
+        cache_results = self._check_tts_cache(reference_results_path, str(output_dir))
+        if cache_results:
+            self.logger.info("找到有效的TTS缓存，直接返回结果")
+            return cache_results
 
-            return results
+        if not self._validate_gradio_client():
+            return self._create_gradio_error_result(output_dir, reference_results_path)
 
-        except Exception as e:
-            self.logger.error(f"TTS生成失败: {str(e)}")
-            return {"success": False, "error": str(e)}
+        return self._process_tts_generation(
+            reference_data, output_dir, reference_results_path
+        )
+
+    def _create_error_result(self, error_message: str) -> Dict[str, Any]:
+        """创建错误结果"""
+        return {"success": False, "error": error_message}
+
+    def _setup_output_dir(
+        self, reference_results_path: str, output_dir: Optional[str]
+    ) -> Path:
+        """设置输出目录"""
+        if output_dir is None:
+            output_dir = Path(reference_results_path).parent.parent / "tts_output"
+        else:
+            output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    def _validate_gradio_client(self) -> bool:
+        """验证Gradio客户端是否可用"""
+        if self.gradio_client is None:
+            self.logger.error("Gradio客户端未初始化或初始化失败")
+            return False
+        return True
+
+    def _create_gradio_error_result(
+        self, output_dir: Path, reference_results_path: str
+    ) -> Dict[str, Any]:
+        """创建Gradio错误结果"""
+        return {
+            "success": False,
+            "error": "Gradio客户端未初始化，请检查TTS服务是否正常运行",
+            "tts_audio_segments": [],
+            "output_dir": str(output_dir),
+            "total_segments": 0,
+            "reference_file": reference_results_path,
+        }
+
+    def _process_tts_generation(
+        self,
+        reference_data: Dict[str, Any],
+        output_dir: Path,
+        reference_results_path: str,
+    ) -> Dict[str, Any]:
+        """处理TTS生成"""
+        reference_segments = reference_data.get("reference_audio_segments", [])
+        if not reference_segments:
+            return self._create_error_result("参考音频片段为空")
+
+        self.logger.info(f"开始TTS语音生成: {reference_results_path}")
+        self.logger.info(f"找到 {len(reference_segments)} 个参考音频片段")
+
+        tts_segments, successful_segments = self._generate_all_segments(
+            reference_segments, output_dir
+        )
+
+        results = self._build_generation_results(
+            tts_segments,
+            successful_segments,
+            reference_segments,
+            output_dir,
+            reference_results_path,
+        )
+
+        results_file_path = self._save_tts_results(results, output_dir)
+        results["results_file"] = str(results_file_path)
+
+        return results
+
+    def _generate_all_segments(
+        self, reference_segments: list, output_dir: Path
+    ) -> tuple:
+        """生成所有TTS片段"""
+        tts_segments = []
+        successful_segments = 0
+
+        for segment in reference_segments:
+            try:
+                tts_result = self._generate_single_tts(segment, output_dir)
+                if tts_result:
+                    tts_segments.append(tts_result)
+                    successful_segments += 1
+                    self.logger.debug(f"TTS生成成功: 片段 {segment['index']}")
+                else:
+                    self.logger.warning(f"TTS生成失败: 片段 {segment['index']}")
+            except Exception as e:
+                self.logger.error(f"处理片段 {segment['index']} 时出错: {str(e)}")
+                continue
+
+        self.logger.info(
+            f"TTS生成完成: {successful_segments}/{len(reference_segments)} 个片段成功"
+        )
+        return tts_segments, successful_segments
+
+    def _build_generation_results(
+        self,
+        tts_segments: list,
+        successful_segments: int,
+        reference_segments: list,
+        output_dir: Path,
+        reference_results_path: str,
+    ) -> Dict[str, Any]:
+        """构建生成结果"""
+        is_success = successful_segments > 0
+        if not is_success:
+            self.logger.error("TTS生成失败：没有成功生成任何音频片段")
+
+        return {
+            "success": is_success,
+            "tts_audio_segments": tts_segments,
+            "output_dir": str(output_dir),
+            "total_segments": len(reference_segments),
+            "successful_segments": successful_segments,
+            "failed_segments": len(reference_segments) - successful_segments,
+            "total_requested": len(reference_segments),
+            "reference_file": reference_results_path,
+            "generation_info": {
+                "device": "api_client",
+                "model_type": self._get_model_info(),
+                "api_url": self.api_url,
+                "gradio_available": True,
+                "segments_generated": successful_segments,
+                "segments_failed": len(reference_segments) - successful_segments,
+            },
+        }
 
     def _load_reference_results(self, json_path: str) -> Optional[Dict[str, Any]]:
         """加载参考音频结果"""
@@ -173,21 +193,16 @@ class TTSProcessor:
 
     def _initialize_gradio_client(self):
         """初始化Gradio客户端"""
-
         try:
             self.logger.info("初始化Gradio客户端...")
-
-            # 创建Gradio客户端，使用动态临时目录
             self.gradio_client = Client(
                 self.api_url,
                 httpx_kwargs={"timeout": 120, "proxy": None},
                 ssl_verify=False,
                 download_files=str(self.gradio_temp_dir),
             )
-
             self.logger.info(f"Gradio客户端初始化成功: {self.api_url}")
             self.logger.info(f"Gradio临时目录: {self.gradio_temp_dir}")
-
         except Exception as e:
             self.logger.error(f"Gradio客户端初始化失败: {str(e)}")
             self.gradio_client = None
@@ -298,48 +313,13 @@ class TTSProcessor:
                 f"调用Gradio Index-TTS: '{text[:30]}...' -> {output_path}"
             )
 
-            # 验证参考音频文件存在
-            if not reference_file or not os.path.exists(reference_file):
-                self.logger.error(f"参考音频文件不存在: {reference_file}")
+            if not self._validate_reference_file(reference_file):
                 return None
 
-            # 准备Index-TTS参数
-            params = {
-                "infer_mode": "普通推理",
-                "max_text_tokens_per_sentence": 120,
-                "sentences_bucket_max_size": 4,
-                "do_sample": True,
-                "top_p": 0.8,
-                "top_k": 30,
-                "temperature": 1.0,
-                "length_penalty": 0.0,
-                "num_beams": 3,
-                "repetition_penalty": 10.0,
-                "max_mel_tokens": 600,
-            }
-
-            # 调用Index-TTS API
-            result = self.gradio_client.predict(
-                handle_file(reference_file),  # prompt (参考音频)
-                text,  # text (待合成文本)
-                params["infer_mode"],  # infer_mode
-                int(
-                    params["max_text_tokens_per_sentence"]
-                ),  # max_text_tokens_per_sentence
-                int(params["sentences_bucket_max_size"]),  # sentences_bucket_max_size
-                params["do_sample"],  # do_sample
-                float(params["top_p"]),  # top_p
-                int(params["top_k"]) if int(params["top_k"]) > 0 else 0,  # top_k
-                float(params["temperature"]),  # temperature
-                float(params["length_penalty"]),  # length_penalty
-                int(params["num_beams"]),  # num_beams
-                float(params["repetition_penalty"]),  # repetition_penalty
-                int(params["max_mel_tokens"]),  # max_mel_tokens
-                api_name="/gen_single",
-            )
+            params = self._get_tts_parameters()
+            result = self._make_gradio_api_call(text, reference_file, params)
 
             if result:
-                # 处理返回的音频文件
                 audio_data = self._process_gradio_result(result, output_path)
                 if audio_data:
                     self.logger.debug(f"Gradio Index-TTS生成成功: {output_path}")
@@ -356,6 +336,50 @@ class TTSProcessor:
         except Exception as e:
             self.logger.error(f"Gradio Index-TTS调用失败: {str(e)}")
             return None
+
+    def _validate_reference_file(self, reference_file: str) -> bool:
+        """验证参考音频文件"""
+        if not reference_file or not os.path.exists(reference_file):
+            self.logger.error(f"参考音频文件不存在: {reference_file}")
+            return False
+        return True
+
+    def _get_tts_parameters(self) -> Dict[str, Any]:
+        """获取TTS参数配置"""
+        return {
+            "infer_mode": "普通推理",
+            "max_text_tokens_per_sentence": 120,
+            "sentences_bucket_max_size": 4,
+            "do_sample": True,
+            "top_p": 0.8,
+            "top_k": 30,
+            "temperature": 1.0,
+            "length_penalty": 0.0,
+            "num_beams": 3,
+            "repetition_penalty": 10.0,
+            "max_mel_tokens": 600,
+        }
+
+    def _make_gradio_api_call(
+        self, text: str, reference_file: str, params: Dict[str, Any]
+    ) -> Any:
+        """执行Gradio API调用"""
+        return self.gradio_client.predict(
+            handle_file(reference_file),
+            text,
+            params["infer_mode"],
+            int(params["max_text_tokens_per_sentence"]),
+            int(params["sentences_bucket_max_size"]),
+            params["do_sample"],
+            float(params["top_p"]),
+            int(params["top_k"]) if int(params["top_k"]) > 0 else 0,
+            float(params["temperature"]),
+            float(params["length_penalty"]),
+            int(params["num_beams"]),
+            float(params["repetition_penalty"]),
+            int(params["max_mel_tokens"]),
+            api_name="/gen_single",
+        )
 
     def _process_gradio_result(self, result: Any, output_path: str) -> bool:
         """处理Gradio API返回的结果"""
@@ -388,12 +412,9 @@ class TTSProcessor:
     @staticmethod
     def _get_gradio_temp_dir() -> Path:
         """获取Gradio临时目录路径"""
-        # 优先使用环境变量GRADIO_TEMP_DIR
         gradio_temp = os.environ.get("GRADIO_TEMP_DIR")
         if gradio_temp:
             return Path(gradio_temp)
-
-        # 否则使用系统临时目录下的gradio子目录
         return Path(tempfile.gettempdir()) / "gradio"
 
     def _generate_silence_audio(
@@ -580,7 +601,7 @@ def generate_tts_from_reference(
 ) -> Dict[str, Any]:
     """
     便捷函数：根据参考音频结果生成TTS语音
-    
+
     注意：使用已初始化的TTS处理器实例，确保API URL一致性
 
     Args:
@@ -594,7 +615,7 @@ def generate_tts_from_reference(
     global _tts_processor_instance
     if _tts_processor_instance is None:
         raise RuntimeError("TTS处理器尚未初始化，请先调用 initialize_tts_processor()")
-    
+
     return _tts_processor_instance.generate_tts_from_reference(
         reference_results_path, output_dir
     )
@@ -603,7 +624,7 @@ def generate_tts_from_reference(
 def clear_tts_cache():
     """
     便捷函数：清理TTS模型缓存
-    
+
     注意：使用已初始化的TTS处理器实例
     """
     global _tts_processor_instance

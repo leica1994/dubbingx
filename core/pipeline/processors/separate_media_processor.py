@@ -7,9 +7,10 @@
 from pathlib import Path
 
 from core.util import sanitize_filename
-from .media_processor import separate_media_core
+
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task, StepProgressDetail
+from ..task import ProcessResult, StepProgressDetail, Task
+from .media_processor import separate_media_core
 
 
 class SeparateMediaProcessor(StepProcessor):
@@ -23,7 +24,9 @@ class SeparateMediaProcessor(StepProcessor):
             max_retries=2,
         )
 
-    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _execute_process(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """执行媒体分离"""
         try:
             # 验证视频文件路径
@@ -50,7 +53,9 @@ class SeparateMediaProcessor(StepProcessor):
             self.logger.info(f"开始媒体分离: {task.video_path}")
 
             # 调用媒体分离功能
-            result = separate_media_core(str(task.video_path), str(media_separation_dir))
+            result = separate_media_core(
+                str(task.video_path), str(media_separation_dir)
+            )
 
             if not result.get("success", False):
                 return ProcessResult(

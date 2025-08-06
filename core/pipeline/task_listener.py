@@ -220,8 +220,10 @@ class TaskFlowListener(TaskListener):
 
     def on_task_completed(self, event: TaskEvent) -> None:
         """任务完成时，将其推送到下一个步骤"""
-        self.logger.info(f"🔄 TaskFlowListener: 收到任务完成事件 - 队列: {event.queue_name}")
-        
+        self.logger.info(
+            f"🔄 TaskFlowListener: 收到任务完成事件 - 队列: {event.queue_name}"
+        )
+
         if not event.task:
             self.logger.error("❌ TaskFlowListener: 事件中没有任务对象")
             return
@@ -235,14 +237,18 @@ class TaskFlowListener(TaskListener):
         if current_step is None:
             self.logger.error(f"❌ 无法从队列名称 {event.queue_name} 解析步骤ID")
             return
-        
-        self.logger.info(f"📍 TaskFlowListener: 当前步骤 {current_step}, 任务 {task.task_id}")
+
+        self.logger.info(
+            f"📍 TaskFlowListener: 当前步骤 {current_step}, 任务 {task.task_id}"
+        )
 
         # 计算下一个步骤
         next_step = current_step + 1
         if next_step < 8:  # 总共8个步骤 (0-7)
-            self.logger.info(f"⏭️ TaskFlowListener: 准备推送任务 {task.task_id} 到步骤 {next_step}")
-            
+            self.logger.info(
+                f"⏭️ TaskFlowListener: 准备推送任务 {task.task_id} 到步骤 {next_step}"
+            )
+
             # 手动更新任务进度到下一步
             task.update_progress(next_step)
 
@@ -250,9 +256,13 @@ class TaskFlowListener(TaskListener):
             try:
                 success = self.task_scheduler.submit_task_to_step(task, next_step)
                 if success:
-                    self.logger.info(f"✅ 任务 {task.task_id} 成功从步骤 {current_step} 推送到步骤 {next_step}")
+                    self.logger.info(
+                        f"✅ 任务 {task.task_id} 成功从步骤 {current_step} 推送到步骤 {next_step}"
+                    )
                 else:
-                    self.logger.error(f"❌ 任务 {task.task_id} 推送到步骤 {next_step} 失败: 提交返回False")
+                    self.logger.error(
+                        f"❌ 任务 {task.task_id} 推送到步骤 {next_step} 失败: 提交返回False"
+                    )
             except Exception as e:
                 self.logger.error(
                     f"❌ 推送任务 {task.task_id} 到步骤 {next_step} 失败: {e}"

@@ -268,7 +268,9 @@ class MediaProcessorCore:
                 "audio_info": {
                     "sample_rate": sample_rate,
                     "duration": len(audio_data) / sample_rate,
-                    "channels": 1 if len(audio_data.shape) == 1 else audio_data.shape[1],
+                    "channels": (
+                        1 if len(audio_data.shape) == 1 else audio_data.shape[1]
+                    ),
                 },
             }
 
@@ -296,7 +298,7 @@ class MediaProcessorCore:
 
         Args:
             video_path: 视频文件路径
-            audio_path: 音频文件路径  
+            audio_path: 音频文件路径
             output_path: 输出文件路径
 
         Returns:
@@ -930,7 +932,9 @@ def get_media_processor_core() -> MediaProcessorCore:
     return _media_processor_instance
 
 
-def separate_media_core(video_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+def separate_media_core(
+    video_path: str, output_dir: Optional[str] = None
+) -> Dict[str, Any]:
     """便捷函数：分离视频中的人声、无声视频和背景音乐"""
     return get_media_processor_core().separate_media(video_path, output_dir)
 
@@ -951,4 +955,6 @@ def merge_audio_video_core(
     video_path: str, audio_path: str, output_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """便捷函数：合并音频和视频文件"""
-    return get_media_processor_core().merge_audio_video(video_path, audio_path, output_path)
+    return get_media_processor_core().merge_audio_video(
+        video_path, audio_path, output_path
+    )

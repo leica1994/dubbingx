@@ -4,8 +4,8 @@
 提供统一的任务缓存功能，支持细粒度的状态保存和恢复
 """
 
+from .cache_types import CacheMetadata, CacheVersion
 from .task_cache import TaskCacheManager
-from .cache_types import CacheVersion, CacheMetadata
 
 __all__ = [
     "TaskCacheManager",

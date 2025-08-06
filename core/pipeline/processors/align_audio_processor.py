@@ -8,9 +8,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .audio_align_processor import align_audio_with_subtitles_core
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task, StepProgressDetail
+from ..task import ProcessResult, StepProgressDetail, Task
+from .audio_align_processor import align_audio_with_subtitles_core
 
 
 class AlignAudioProcessor(StepProcessor):
@@ -24,7 +24,9 @@ class AlignAudioProcessor(StepProcessor):
             max_retries=2,
         )
 
-    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _execute_process(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """执行音频对齐"""
         try:
             # 验证依赖文件

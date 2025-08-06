@@ -6,9 +6,9 @@
 
 from pathlib import Path
 
-from .audio_align_processor import process_video_speed_adjustment_core
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task, StepProgressDetail
+from ..task import ProcessResult, StepProgressDetail, Task
+from .audio_align_processor import process_video_speed_adjustment_core
 
 
 class ProcessVideoSpeedProcessor(StepProcessor):
@@ -22,7 +22,9 @@ class ProcessVideoSpeedProcessor(StepProcessor):
             max_retries=2,
         )
 
-    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _execute_process(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """执行视频速度调整"""
         try:
             # 验证依赖文件

@@ -7,9 +7,10 @@
 from pathlib import Path
 
 from core.util import sanitize_filename
-from .subtitle_preprocessor import preprocess_subtitle_core
+
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task, StepProgressDetail
+from ..task import ProcessResult, StepProgressDetail, Task
+from .subtitle_preprocessor import preprocess_subtitle_core
 
 
 class PreprocessSubtitleProcessor(StepProcessor):
@@ -23,7 +24,9 @@ class PreprocessSubtitleProcessor(StepProcessor):
             max_retries=3,
         )
 
-    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _execute_process(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """执行字幕预处理"""
         try:
             # 验证字幕文件路径
@@ -67,7 +70,7 @@ class PreprocessSubtitleProcessor(StepProcessor):
             # 转换SubtitleEntry对象为字典以支持JSON序列化
             subtitle_entries = result.get("subtitle_entries", [])
             subtitle_entries_dict = [
-                entry.to_dict() if hasattr(entry, 'to_dict') else entry 
+                entry.to_dict() if hasattr(entry, "to_dict") else entry
                 for entry in subtitle_entries
             ]
 

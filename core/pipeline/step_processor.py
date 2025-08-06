@@ -9,7 +9,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
-from .task import ProcessResult, Task, TaskStatus, StepStatus, StepProgressDetail
+from .task import ProcessResult, StepProgressDetail, StepStatus, Task, TaskStatus
 
 
 class StepProcessor(ABC):
@@ -70,19 +70,23 @@ class StepProcessor(ABC):
 
             # 初始化步骤详细信息
             step_detail = task.init_step_detail(self.step_id, self.step_name)
-            
+
             # 检查步骤状态
             step_status = task.get_step_status(self.step_id)
-            
+
             if step_status == StepStatus.COMPLETED:
                 # 步骤已完成，跳过处理
-                self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 已完成，跳过处理")
+                self.logger.info(
+                    f"任务 {task.task_id} 步骤 {self.step_name} 已完成，跳过处理"
+                )
                 result = task.get_step_result(self.step_id)
                 if result:
                     return result
             elif step_status == StepStatus.PROCESSING:
                 # 步骤之前中断了，需要从中断处继续
-                self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 从中断处继续执行")
+                self.logger.info(
+                    f"任务 {task.task_id} 步骤 {self.step_name} 从中断处继续执行"
+                )
                 step_detail.status = StepStatus.PROCESSING
                 # 发送处理中状态
                 self._notify_status_change(task, "processing", "从中断处继续执行")
@@ -91,9 +95,13 @@ class StepProcessor(ABC):
                 # 步骤未进行，从头开始
                 self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 开始执行")
                 step_detail.status = StepStatus.PROCESSING
-                task.update_status(TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}")
+                task.update_status(
+                    TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}"
+                )
                 # 发送处理中状态
-                self._notify_status_change(task, "processing", f"开始执行步骤: {self.step_name}")
+                self._notify_status_change(
+                    task, "processing", f"开始执行步骤: {self.step_name}"
+                )
                 result = self._execute_process(task, step_detail)
 
             # 记录处理时间
@@ -108,12 +116,14 @@ class StepProcessor(ABC):
             if result.success:
                 step_detail.status = StepStatus.COMPLETED
                 # 发送完成状态
-                self._notify_status_change(task, "completed", f"步骤 {self.step_name} 处理成功")
+                self._notify_status_change(
+                    task, "completed", f"步骤 {self.step_name} 处理成功"
+                )
                 self.logger.info(
                     f"任务 {task.task_id} 步骤 {self.step_name} 处理成功 "
                     f"(耗时: {processing_time:.2f}s)"
                 )
-            elif getattr(result, 'partial_success', False):
+            elif getattr(result, "partial_success", False):
                 # 部分成功，保持当前状态（可能是PROCESSING）
                 self.logger.warning(
                     f"任务 {task.task_id} 步骤 {self.step_name} 部分成功 "
@@ -122,17 +132,20 @@ class StepProcessor(ABC):
             else:
                 step_detail.status = StepStatus.FAILED
                 # 发送失败状态
-                self._notify_status_change(task, "failed", f"步骤 {self.step_name} 处理失败: {result.error}")
+                self._notify_status_change(
+                    task, "failed", f"步骤 {self.step_name} 处理失败: {result.error}"
+                )
                 self.logger.error(
                     f"任务 {task.task_id} 步骤 {self.step_name} 处理失败: {result.error}"
                 )
-                
+
             # 设置任务步骤结果
             task.set_step_result(self.step_id, result)
 
             # 保存缓存（如果任务有路径信息）
             if task.paths and "pipeline_cache" in task.paths:
                 from pathlib import Path
+
                 cache_path = Path(task.paths["pipeline_cache"])
                 if task.save_to_cache(cache_path):
                     self.logger.debug(f"任务 {task.task_id} 缓存已更新")
@@ -160,7 +173,9 @@ class StepProcessor(ABC):
             return result
 
     @abstractmethod
-    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _execute_process(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """
         执行具体的处理逻辑（子类必须实现）
 
@@ -173,14 +188,16 @@ class StepProcessor(ABC):
         """
         pass
 
-    def _resume_from_interruption(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _resume_from_interruption(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """
         从中断处恢复执行（默认实现，子类可以重写）
-        
+
         Args:
             task: 要处理的任务
             step_detail: 步骤详细信息
-            
+
         Returns:
             处理结果
         """
@@ -242,10 +259,14 @@ class StepProcessor(ABC):
     def _notify_status_change(self, task: Task, status: str, message: str = "") -> None:
         """通知流水线状态变化"""
         try:
-            if hasattr(task, 'pipeline_ref') and task.pipeline_ref:
-                task.pipeline_ref.notify_step_status(task.task_id, self.step_id, status, message)
+            if hasattr(task, "pipeline_ref") and task.pipeline_ref:
+                task.pipeline_ref.notify_step_status(
+                    task.task_id, self.step_id, status, message
+                )
         except Exception as e:
-            self.logger.debug(f"通知状态变化失败: {e}")  # 使用debug级别，避免干扰主要日志
+            self.logger.debug(
+                f"通知状态变化失败: {e}"
+            )  # 使用debug级别，避免干扰主要日志
 
     def get_next_step_id(self) -> Optional[int]:
         """获取下一个步骤ID"""
@@ -347,9 +368,7 @@ class StepProcessor(ABC):
 
     def __str__(self) -> str:
         """字符串表示"""
-        return (
-            f"StepProcessor(id={self.step_id}, name={self.step_name})"
-        )
+        return f"StepProcessor(id={self.step_id}, name={self.step_name})"
 
     def __repr__(self) -> str:
         """调试表示"""

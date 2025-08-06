@@ -6,9 +6,9 @@
 
 from pathlib import Path
 
-from .media_processor import generate_reference_audio_core
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task, StepProgressDetail
+from ..task import ProcessResult, StepProgressDetail, Task
+from .media_processor import generate_reference_audio_core
 
 
 class GenerateReferenceAudioProcessor(StepProcessor):
@@ -22,7 +22,9 @@ class GenerateReferenceAudioProcessor(StepProcessor):
             max_retries=2,
         )
 
-    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _execute_process(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """执行生成参考音频"""
         try:
             # 验证依赖文件
@@ -72,7 +74,7 @@ class GenerateReferenceAudioProcessor(StepProcessor):
 
             # 更新任务路径信息
             results_json_file = result.get("results_json_file", "")
-            
+
             # 验证结果文件是否真正存在
             if not results_json_file or not Path(results_json_file).exists():
                 return ProcessResult(
@@ -80,7 +82,7 @@ class GenerateReferenceAudioProcessor(StepProcessor):
                     message="参考音频结果文件生成失败",
                     error=f"结果文件不存在或路径为空: {results_json_file}",
                 )
-            
+
             task.paths.update(
                 {
                     "reference_audio_dir": str(reference_audio_dir),

@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 class CacheVersion(Enum):
     """缓存版本枚举"""
-    
+
     V1_0 = "1.0"  # 旧版本缓存格式
     V2_0 = "2.0"  # 新版本缓存格式（支持细粒度状态）
     CURRENT = V2_0  # 当前使用的版本
@@ -21,7 +21,7 @@ class CacheVersion(Enum):
 @dataclass
 class CacheMetadata:
     """缓存元数据"""
-    
+
     version: str = CacheVersion.CURRENT.value
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     saved_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -29,14 +29,14 @@ class CacheMetadata:
     video_path: Optional[str] = None
     total_steps: int = 8
     completed_steps: int = 0
-    
+
     # 额外的元数据
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
     def update_save_time(self):
         """更新保存时间"""
         self.saved_at = datetime.now().isoformat()
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
@@ -49,7 +49,7 @@ class CacheMetadata:
             "completed_steps": self.completed_steps,
             "metadata": self.metadata,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CacheMetadata":
         """从字典创建对象"""

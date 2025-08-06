@@ -161,8 +161,10 @@ class TaskQueue:
             message: 处理消息
         """
         try:
-            self.logger.info(f"🏁 队列 {self.name}: 标记任务 {task.task_id} 完成, 成功: {success}")
-            
+            self.logger.info(
+                f"🏁 队列 {self.name}: 标记任务 {task.task_id} 完成, 成功: {success}"
+            )
+
             self._queue.task_done()
 
             with self._lock:
@@ -182,8 +184,10 @@ class TaskQueue:
                 message=message
                 or f"任务 {task.task_id} 在队列 {self.name} 处理{'成功' if success else '失败'}",
             )
-            
-            self.logger.info(f"📢 队列 {self.name}: 准备通知 {len(self._listeners)} 个监听器")
+
+            self.logger.info(
+                f"📢 队列 {self.name}: 准备通知 {len(self._listeners)} 个监听器"
+            )
             self._notify_listeners(event)
             self.logger.info(f"✅ 队列 {self.name}: 事件通知完成")
 

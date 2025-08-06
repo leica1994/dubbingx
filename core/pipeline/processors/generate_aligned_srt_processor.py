@@ -6,10 +6,10 @@
 
 from pathlib import Path
 
-from .audio_align_processor import generate_aligned_srt_core
 from ...subtitle.subtitle_processor import convert_subtitle, sync_srt_timestamps_to_ass
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task, StepProgressDetail
+from ..task import ProcessResult, StepProgressDetail, Task
+from .audio_align_processor import generate_aligned_srt_core
 
 
 class GenerateAlignedSrtProcessor(StepProcessor):
@@ -23,7 +23,9 @@ class GenerateAlignedSrtProcessor(StepProcessor):
             max_retries=2,
         )
 
-    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _execute_process(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """执行生成对齐字幕"""
         try:
             # 验证依赖文件

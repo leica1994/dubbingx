@@ -1197,5 +1197,3 @@ def batch_process_texts(
             results.append(error_result)
 
     return results
-
-

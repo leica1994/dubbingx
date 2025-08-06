@@ -6,9 +6,9 @@
 
 from pathlib import Path
 
-from .media_processor import merge_audio_video_core
 from ..step_processor import StepProcessor
-from ..task import ProcessResult, Task, StepProgressDetail
+from ..task import ProcessResult, StepProgressDetail, Task
+from .media_processor import merge_audio_video_core
 
 
 class MergeAudioVideoProcessor(StepProcessor):
@@ -22,7 +22,9 @@ class MergeAudioVideoProcessor(StepProcessor):
             max_retries=2,
         )
 
-    def _execute_process(self, task: Task, step_detail: StepProgressDetail) -> ProcessResult:
+    def _execute_process(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
         """执行音视频合并"""
         try:
             # 验证依赖文件
