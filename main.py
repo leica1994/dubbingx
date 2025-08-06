@@ -872,18 +872,7 @@ class DubbingGUI(QMainWindow):
         batch_mode_layout.addStretch()
         options_layout.addLayout(batch_mode_layout)
 
-        # 并行处理选项
-        parallel_options_layout = QHBoxLayout()
-
-        parallel_options_layout.addWidget(QLabel("最大工作线程:"))
-
-        self.max_workers_spinbox = QLineEdit()
-        self.max_workers_spinbox.setPlaceholderText("自动")
-        self.max_workers_spinbox.setMaximumWidth(60)
-        parallel_options_layout.addWidget(self.max_workers_spinbox)
-
-        parallel_options_layout.addStretch()
-        options_layout.addLayout(parallel_options_layout)
+        # 并行处理选项已移除 - 使用系统预设的每步骤线程池配置
 
         # Index-TTS API配置
         api_options_layout = QHBoxLayout()
