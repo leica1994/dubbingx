@@ -57,8 +57,8 @@ class TaskScheduler:
             3: 2,  # generate_tts - GPU任务
             4: 4,  # align_audio - 增加线程数
             5: 4,  # generate_aligned_srt - I/O任务
-            6: 4,  # process_video_speed - I/O任务
-            7: 4,  # merge_audio_video - I/O任务
+            6: 2,  # process_video_speed - GPU任务
+            7: 2,  # merge_audio_video - GPU任务
         }
 
         # 队列管理器
