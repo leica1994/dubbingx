@@ -1093,10 +1093,6 @@ class DubbingGUI(QMainWindow):
         log_tab = self.create_log_tab()
         tab_widget.addTab(log_tab, "日志输出")
 
-        # 结果标签页
-        result_tab = self.create_result_tab()
-        tab_widget.addTab(result_tab, "处理结果")
-
         layout.addWidget(tab_widget)
 
         return panel
@@ -1217,71 +1213,6 @@ class DubbingGUI(QMainWindow):
         
         legend_layout.addStretch()
         layout.addLayout(legend_layout)
-
-        return tab
-
-    def create_result_tab(self) -> QWidget:
-        """创建结果标签页"""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        # 批量处理进度条
-        self.batch_progress_group = QGroupBox("批量处理进度")
-        batch_progress_layout = QVBoxLayout(self.batch_progress_group)
-        batch_progress_layout.setContentsMargins(15, 12, 15, 12)
-
-        # 进度条
-        self.batch_progress_bar = QProgressBar()
-        self.batch_progress_bar.setStyleSheet(
-            """
-            QProgressBar {
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-                text-align: center;
-                background-color: #f8f9fa;
-                font-size: 11px;
-                color: #495057;
-                font-weight: bold;
-                height: 25px;
-            }
-            QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #0d6efd, stop:1 #6610f2);
-                border-radius: 3px;
-            }
-        """
-        )
-        batch_progress_layout.addWidget(self.batch_progress_bar)
-
-        # 当前处理文件标签
-        self.current_file_label = QLabel("当前处理文件: 无")
-        self.current_file_label.setStyleSheet("font-size: 11px; color: #6c757d;")
-        batch_progress_layout.addWidget(self.current_file_label)
-
-        # 默认隐藏进度条组
-        self.batch_progress_group.hide()
-
-        layout.addWidget(self.batch_progress_group)
-
-        # 结果信息
-        self.result_text = QTextEdit()
-        self.result_text.setReadOnly(True)
-        self.result_text.setPlaceholderText("处理完成后将在此显示结果信息...")
-        self.result_text.setStyleSheet(
-            """
-            QTextEdit {
-                background-color: white;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                padding: 20px;
-                font-size: 12px;
-                line-height: 1.6;
-                color: #333;
-            }
-        """
-        )
-        layout.addWidget(self.result_text)
 
         return tab
 
@@ -1620,17 +1551,20 @@ class DubbingGUI(QMainWindow):
             video_name = Path(video_path).name
             video_item = QTableWidgetItem(video_name)
             video_item.setToolTip(video_path)
+            video_item.setFlags(video_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
             self.file_table.setItem(i, 0, video_item)
 
             # 字幕文件名（现在一定有匹配的字幕）
             subtitle_name = Path(subtitle_path).name
             subtitle_item = QTableWidgetItem(subtitle_name)
             subtitle_item.setToolTip(subtitle_path)
+            subtitle_item.setFlags(subtitle_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
             self.file_table.setItem(i, 1, subtitle_item)
 
             # 状态（现在一定是就绪状态）
             status_item = QTableWidgetItem("就绪")
             status_item.setForeground(QColor("#198754"))  # 绿色
+            status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
             self.file_table.setItem(i, 2, status_item)
 
             # 选择框
@@ -1708,6 +1642,7 @@ class DubbingGUI(QMainWindow):
             
             if not step_item:
                 step_item = QTableWidgetItem()
+                step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
                 self.status_table.setItem(task_row, step_col, step_item)
             
             # 检查是否需要更新状态（避免重复更新）
@@ -1813,6 +1748,7 @@ class DubbingGUI(QMainWindow):
                 
                 if not step_item:
                     step_item = QTableWidgetItem()
+                    step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
                     self.status_table.setItem(task_row, step_col, step_item)
                 
                 step_item.setText("⏸️")  # 未开始
@@ -1847,12 +1783,14 @@ class DubbingGUI(QMainWindow):
             status_item = self.status_table.item(row, 9)
             if not status_item:
                 status_item = QTableWidgetItem()
+                status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
                 self.status_table.setItem(row, 9, status_item)
             
             # 更新进度列（列索引 10）
             progress_item = self.status_table.item(row, 10)
             if not progress_item:
                 progress_item = QTableWidgetItem()
+                progress_item.setFlags(progress_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
                 self.status_table.setItem(row, 10, progress_item)
             
             # 设置状态和进度
@@ -1897,6 +1835,7 @@ class DubbingGUI(QMainWindow):
                 video_name = Path(video_path).name
                 video_item = QTableWidgetItem(video_name)
                 video_item.setToolTip(video_path)
+                video_item.setFlags(video_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
                 self.status_table.setItem(i, 0, video_item)
 
                 # 步骤名称
@@ -1937,6 +1876,7 @@ class DubbingGUI(QMainWindow):
                     
                     step_item.setToolTip(tooltip)
                     step_item.setTextAlignment(Qt.AlignCenter)
+                    step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
                     self.status_table.setItem(i, 1 + step_idx, step_item)
 
                 # 更新整体状态
@@ -2103,16 +2043,6 @@ class DubbingGUI(QMainWindow):
         self.cancel_btn.setEnabled(True)
 
         try:
-            # 显示进度组件
-            self.batch_progress_group.show()
-            self.batch_progress_bar.setMaximum(len(video_subtitle_pairs))
-            self.batch_progress_bar.setValue(0)
-            
-            if is_single_mode:
-                self.current_file_label.setText(f"当前处理文件: {Path(video_subtitle_pairs[0][0]).name}")
-            else:
-                self.current_file_label.setText("当前处理文件: 准备中...")
-
             # 创建统一的批量处理工作线程
             self.worker_thread = StreamlineBatchDubbingWorkerThread(
                 video_subtitle_pairs,
@@ -2121,7 +2051,6 @@ class DubbingGUI(QMainWindow):
 
             # 连接信号 - 统一使用批量处理的信号处理
             self.worker_thread.batch_finished.connect(self._unified_processing_finished)
-            self.worker_thread.progress_update.connect(self._unified_progress_update)
             
             # 初始化状态表格并连接日志信号（单文件和批量模式都显示）
             self.initialize_status_table(video_subtitle_pairs)
@@ -2148,9 +2077,6 @@ class DubbingGUI(QMainWindow):
             # 恢复UI状态
             self.start_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
-            
-            # 隐藏进度组件
-            self.batch_progress_group.hide()
             
             # 根据当前模式显示相应的结果
             if self.current_mode == "single":
@@ -2187,18 +2113,6 @@ class DubbingGUI(QMainWindow):
         else:
             QMessageBox.warning(self, "批量处理完成", message)
 
-    def _unified_progress_update(self, current: int, total: int, filename: str):
-        """统一的进度更新"""
-        try:
-            self.batch_progress_bar.setMaximum(total)
-            self.batch_progress_bar.setValue(current)
-            
-            if filename:
-                self.current_file_label.setText(f"当前处理文件: {filename}")
-                
-        except Exception as e:
-            self.logger.error(f"进度更新失败: {e}")
-
     def cancel_processing(self):
         """取消处理"""
         if self.worker_thread and self.worker_thread.isRunning():
@@ -2207,160 +2121,24 @@ class DubbingGUI(QMainWindow):
 
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        self.batch_progress_group.hide()
-
-    def parallel_batch_progress_update(self, current: int, total: int, filename: str):
-        """并行批量处理进度更新"""
-        self.batch_progress_bar.setValue(current)
-        self.current_file_label.setText(f"当前处理文件: {Path(filename).name}")
-
-    def parallel_batch_finished(
-        self, success: bool, message: str, result: Dict[str, Any]
-    ):
-        """并行批量处理完成"""
-        # 更新UI状态
-        self.start_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
-        self.batch_progress_group.hide()
-
-        # 显示结果信息
-        result_info = f"""并行批量处理完成！
-
-处理统计:
-• 总文件数: {result.get('total_count', 0)}
-• 成功处理: {result.get('success_count', 0)}
-• 处理失败: {result.get('failed_count', 0)}
-• 总耗时: {result.get('total_time', 0):.2f} 秒
-• 完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-提示: 并行处理已完成，请查看各文件的输出目录
-"""
-        self.result_text.setText(result_info)
-
-        if success:
-            QMessageBox.information(self, "成功", message)
-        else:
-            QMessageBox.warning(self, "完成", message)
-
-    def processing_finished(self, success: bool, message: str, result: Dict[str, Any]):
-        """单文件处理完成"""
-        # 更新UI状态
-        self.start_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
-
-        if success:
-            # 显示结果信息
-            result_info = f"""处理完成！
-
-输出信息:
-• 输出文件: {result.get('output_file', '未知')}
-• 输出目录: {result.get('output_dir', '未知')}
-• 完成步骤: {result.get('steps_completed', 0)}/8
-• 缓存恢复: {'是' if result.get('resumed_from_cache', False) else '否'}
-• 完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-您的配音视频已准备就绪！
-"""
-            self.result_text.setText(result_info)
-
-            QMessageBox.information(self, "成功", message)
-        else:
-            QMessageBox.critical(self, "失败", message)
 
     def show_cache_info(self):
         """显示缓存信息"""
-        if self.current_mode == "single":
-            if not self.current_video_path:
-                QMessageBox.warning(self, "警告", "请先选择视频文件！")
-                return
-            video_path = self.current_video_path
-        else:
-            QMessageBox.information(
-                self, "信息", "批量模式下请单独查看各文件的缓存信息"
-            )
-            return
-
-        try:
-            cache_info = self.pipeline.get_pipeline_cache_info(video_path)
-
-            if cache_info["success"]:
-                if cache_info["cache_exists"]:
-                    info_text = f"""缓存文件信息:
-
-文件路径: {cache_info['cache_file']}
-创建时间: {cache_info.get('created_at', '未知')}
-更新时间: {cache_info.get('updated_at', '未知')}
-总步骤数: {cache_info.get('total_steps', 0)}
-已完成步骤: {cache_info.get('completed_steps', 0)}
-剩余步骤: {cache_info.get('remaining_steps', 0)}
-
-已完成的步骤:
-{chr(10).join('• ' + step for step in cache_info.get('completed_step_names', []))}
-
-剩余的步骤:
-{chr(10).join('• ' + step for step in cache_info.get('remaining_step_names', []))}
-"""
-                else:
-                    info_text = "缓存文件不存在"
-
-                QMessageBox.information(self, "缓存信息", info_text)
-            else:
-                QMessageBox.warning(self, "错误", cache_info["message"])
-
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"获取缓存信息失败: {str(e)}")
+        QMessageBox.information(
+            self, "信息", "请通过日志输出查看缓存相关信息"
+        )
 
     def clear_cache(self):
         """清理缓存"""
-        if self.current_mode == "single":
-            if not self.current_video_path:
-                QMessageBox.warning(self, "警告", "请先选择视频文件！")
-                return
-            video_path = self.current_video_path
-        else:
-            QMessageBox.information(self, "信息", "批量模式下请单独清理各文件的缓存")
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "确认清理",
-            "确定要清理缓存吗？这将删除所有已保存的处理进度。",
-            QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.information(
+            self, "信息", "请手动删除相应的缓存文件，或重新处理文件"
         )
-
-        if reply == QMessageBox.Yes:
-            try:
-                result = self.pipeline.clear_pipeline_cache(video_path)
-
-                if result["success"]:
-                    QMessageBox.information(self, "成功", result["message"])
-                else:
-                    QMessageBox.warning(self, "错误", result["message"])
-
-            except Exception as e:
-                QMessageBox.critical(self, "错误", f"清理缓存失败: {str(e)}")
 
     def repair_cache(self):
         """修复缓存"""
-        if self.current_mode == "single":
-            if not self.current_video_path:
-                QMessageBox.warning(self, "警告", "请先选择视频文件！")
-                return
-            video_path = self.current_video_path
-        else:
-            QMessageBox.information(self, "信息", "批量模式下请单独修复各文件的缓存")
-            return
-
-        try:
-            result = self.pipeline.check_and_repair_cache(video_path)
-
-            if result["success"]:
-                QMessageBox.information(self, "成功", result["message"])
-            else:
-                QMessageBox.warning(self, "错误", result["message"])
-
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"修复缓存失败: {str(e)}")
+        QMessageBox.information(
+            self, "信息", "请通过重新处理文件来修复缓存"
+        )
 
     def clear_output_directories(self):
         """清理重复的输出目录"""
