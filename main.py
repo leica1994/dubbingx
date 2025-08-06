@@ -268,14 +268,21 @@ class DubbingGUI(QMainWindow):
         # 连接日志信号
         self.log_message.connect(self.append_log_message)
 
-        # 连接直接状态信号（优先级高于日志解析）
-        self.gui_pipeline.step_status_changed.connect(self.update_step_status_direct)
+        # 注意：GUI pipeline主要用于资源管理，实际任务处理在worker线程的pipeline中进行
+        # 真正的信号连接会在创建worker线程后重新建立到worker pipeline的信号发送器
+        # signal_emitter = self.gui_pipeline.status_event_manager.get_signal_emitter()
+        # signal_emitter.step_status_changed.connect(self.update_step_status_direct)
+        # signal_emitter.step_progress_changed.connect(self.update_step_progress_direct)
+        # signal_emitter.task_status_changed.connect(self.update_task_status_direct)
 
-        # 添加状态更新的线程同步和时间戳跟踪
+        # 任务ID到GUI表格行的映射表
+        self._task_id_to_row_map = {}
+        # 表格行到任务ID的反向映射表
+        self._row_to_task_id_map = {}
+        
+        # 添加状态更新的线程同步机制（简化版）
         self._status_update_lock = threading.Lock()
-        self._step_timestamps = {}  # 格式: {(task_name, step_id): timestamp}
-        self._step_sequence = {}    # 格式: {(task_name, step_id): sequence_number}
-        self._global_sequence = 0   # 全局序列号
+        self._last_update_time = {}  # 格式: {(task_name, step_id): timestamp} - 用于防抖
 
         # 设置窗口属性
         self.setWindowTitle("DubbingX - 智能视频配音系统")
@@ -307,11 +314,9 @@ class DubbingGUI(QMainWindow):
     def closeEvent(self, event):
         """处理窗口关闭事件"""
         try:
-            print("开始关闭应用程序...")
             self._cleanup_resources()
-            print("应用程序资源清理完成")
         except Exception as e:
-            print(f"关闭时清理资源出错: {e}")
+            pass
         finally:
             event.accept()
             self._force_exit()
@@ -330,7 +335,6 @@ class DubbingGUI(QMainWindow):
     def _cleanup_single_thread(self):
         """清理单文件处理线程"""
         if hasattr(self, "worker_thread") and self.worker_thread is not None:
-            print("停止单文件处理线程...")
             self._terminate_thread(self.worker_thread)
             self.worker_thread = None
 
@@ -340,7 +344,6 @@ class DubbingGUI(QMainWindow):
             hasattr(self, "parallel_batch_worker_thread")
             and self.parallel_batch_worker_thread is not None
         ):
-            print("停止批量处理线程...")
             if hasattr(self.parallel_batch_worker_thread, "cancel"):
                 self.parallel_batch_worker_thread.cancel()
             self._terminate_thread(self.parallel_batch_worker_thread)
@@ -357,7 +360,6 @@ class DubbingGUI(QMainWindow):
     def _cleanup_pipelines(self):
         """清理流水线资源"""
         if hasattr(self, "gui_pipeline") and self.gui_pipeline is not None:
-            print("停止GUI流水线...")
             self._stop_task_scheduler()
             self._cleanup_gui_pipeline()
 
@@ -371,7 +373,7 @@ class DubbingGUI(QMainWindow):
                 self.gui_pipeline.task_scheduler.stop(timeout=2.0)
                 self._force_close_thread_pools()
             except Exception as e:
-                print(f"停止TaskScheduler时出错: {e}")
+                pass
 
     def _force_close_thread_pools(self):
         """强制关闭所有线程池"""
@@ -380,7 +382,6 @@ class DubbingGUI(QMainWindow):
                 step_id,
                 executor,
             ) in self.gui_pipeline.task_scheduler.worker_pools.items():
-                print(f"强制关闭步骤 {step_id} 的线程池...")
                 self._force_terminate_threads(executor)
                 executor.shutdown(wait=False)
 
@@ -393,9 +394,8 @@ class DubbingGUI(QMainWindow):
                         ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(
                             ctypes.c_long(thread.ident), ctypes.py_object(SystemExit)
                         )
-                        print(f"线程 {thread.ident} 终止状态: {ret}")
                     except Exception as e:
-                        print(f"强制终止线程失败: {e}")
+                        pass
 
     def _cleanup_gui_pipeline(self):
         """清理GUI流水线"""
@@ -403,7 +403,7 @@ class DubbingGUI(QMainWindow):
             try:
                 self.gui_pipeline.cleanup()
             except Exception as e:
-                print(f"清理GUI流水线时出错: {e}")
+                pass
         self.gui_pipeline = None
 
     def _cleanup_log_handlers(self):
@@ -421,7 +421,7 @@ class DubbingGUI(QMainWindow):
                 except Exception:
                     pass
         except Exception as e:
-            print(f"清理日志处理器时出错: {e}")
+            pass
 
     def _force_exit(self):
         """强制退出应用程序"""
@@ -431,13 +431,7 @@ class DubbingGUI(QMainWindow):
 
     def _print_thread_info(self):
         """打印线程信息"""
-        active_threads = threading.active_count()
-        print(f"当前活跃线程数: {active_threads}")
-
-        if active_threads > 1:
-            print("活跃线程列表:")
-            for thread in threading.enumerate():
-                print(f"  - {thread.name} (daemon: {thread.daemon})")
+        pass
 
     def _attempt_normal_exit(self):
         """尝试正常退出"""
@@ -447,7 +441,6 @@ class DubbingGUI(QMainWindow):
 
     def _emergency_exit(self):
         """紧急强制退出"""
-        print("强制退出进程...")
         try:
             os._exit(0)
         except SystemExit:
@@ -1218,206 +1211,20 @@ class DubbingGUI(QMainWindow):
         """解析日志消息以更新任务状态
 
         注意：此方法作为备用机制保留，直接状态信号（update_step_status_direct）具有更高优先级
+        在异步状态管理系统正常工作时，此方法应该不会被调用
         """
         try:
-            # 1. 解析工作线程开始处理任务的日志
-            # 格式: "工作线程 Step-X-stepname-Y 开始处理任务 streamline_task_XXX_taskname"
-            if (
-                "工作线程" in message
-                and "开始处理任务" in message
-                and "streamline_task_" in message
-            ):
-                step_match = re.search(r"Step-(\d+)-", message)
-                task_match = re.search(r"streamline_task_\d+_(.*?)(?:\s|$)", message)
-
-                if step_match and task_match:
-                    step_id = int(step_match.group(1))
-                    task_name = task_match.group(1).strip()
-                    self.update_task_step_status(task_name, step_id, "processing")
-                    return
-
-            # 2. 解析处理器开始处理任务的日志（基类统一格式）
-            # 格式: "开始处理任务 streamline_task_XXX_taskname - 步骤: stepname"
-            elif (
-                "开始处理任务" in message
-                and "streamline_task_" in message
-                and "步骤:" in message
-            ):
-                task_match = re.search(
-                    r"开始处理任务 streamline_task_\d+_(.*?) - 步骤: (\w+)", message
-                )
-
+            # 简化版本：只解析一些关键的日志模式
+            if "处理成功" in message and "streamline_task" in message:
+                # 解析任务完成日志
+                task_match = re.search(r"streamline_task_\d+_(.*?)\s", message)
                 if task_match:
                     task_name = task_match.group(1).strip()
-                    step_name = task_match.group(2)
-
-                    # 将步骤名映射到步骤ID
-                    step_name_to_id = {
-                        "preprocess_subtitle": 0,
-                        "separate_media": 1,
-                        "generate_reference_audio": 2,
-                        "generate_tts": 3,
-                        "align_audio": 4,
-                        "generate_aligned_srt": 5,
-                        "process_video_speed": 6,
-                        "merge_audio_video": 7,
-                    }
-
-                    step_id = step_name_to_id.get(step_name)
-                    if step_id is not None:
-                        self.update_task_step_status(task_name, step_id, "processing")
-                    return
-
-            # 3. 解析各步骤的自定义开始日志（处理器内部日志）
-            # 这些日志可能不包含完整的task_id，需要推断当前正在处理的任务
-            elif "开始" in message:
-                step_keywords = {
-                    "开始预处理字幕": 0,
-                    "开始媒体分离": 1,
-                    "开始生成参考音频": 2,
-                    "开始TTS生成": 3,
-                    "开始音频对齐": 4,
-                    "开始生成对齐字幕": 5,
-                    "开始视频速度调整": 6,
-                    "开始音视频合并": 7,
-                }
-
-                # 检查是否匹配任何步骤关键词
-                for keyword, step_id in step_keywords.items():
-                    if keyword in message:
-                        # 如果消息包含streamline_task_，提取任务名
-                        if "streamline_task_" in message:
-                            task_match = re.search(
-                                r"streamline_task_\d+_(.*?)(?:\s|:|$)", message
-                            )
-                            if task_match:
-                                task_name = task_match.group(1).strip()
-                                self.update_task_step_status(
-                                    task_name, step_id, "processing"
-                                )
-                        else:
-                            # 如果没有task_id，更新所有可能正在此步骤的任务
-                            self.update_current_step_tasks_status(step_id, "processing")
-                        return
-
-                # 4. 通用的开始处理检测（包含streamline_task_的其他开始日志）
-                if "streamline_task_" in message:
-                    task_match = re.search(
-                        r"streamline_task_\d+_(.*?)(?:\s|:|$)", message
-                    )
-                    if task_match:
-                        task_name = task_match.group(1).strip()
-
-                        # 根据消息内容推断步骤
-                        if any(word in message for word in ["TTS生成", "generate_tts"]):
-                            self.update_task_step_status(task_name, 3, "processing")
-                        elif any(
-                            word in message
-                            for word in ["参考音频", "generate_reference_audio"]
-                        ):
-                            self.update_task_step_status(task_name, 2, "processing")
-                        elif any(
-                            word in message for word in ["媒体分离", "separate_media"]
-                        ):
-                            self.update_task_step_status(task_name, 1, "processing")
-                        elif any(
-                            word in message
-                            for word in ["字幕预处理", "preprocess_subtitle"]
-                        ):
-                            self.update_task_step_status(task_name, 0, "processing")
-                        elif any(
-                            word in message for word in ["音频对齐", "align_audio"]
-                        ):
-                            self.update_task_step_status(task_name, 4, "processing")
-                        elif any(
-                            word in message
-                            for word in ["对齐字幕", "generate_aligned_srt"]
-                        ):
-                            self.update_task_step_status(task_name, 5, "processing")
-                        elif any(
-                            word in message
-                            for word in ["视频调速", "视频速度", "process_video_speed"]
-                        ):
-                            self.update_task_step_status(task_name, 6, "processing")
-                        elif any(
-                            word in message for word in ["合并", "merge_audio_video"]
-                        ):
-                            self.update_task_step_status(task_name, 7, "processing")
-                    return
-
-            # 5. 简化的开始处理检测 - 检测TTS相关日志
-            elif (
-                "开始TTS生成" in message or "gradio_api" in message.lower()
-            ) and hasattr(self, "status_table"):
-                # 没有具体任务名的情况下，尝试更新所有正在第3步的任务
-                self.update_processing_tasks_status()
-                return
-
-            # 6. 解析任务完成的日志
-            # 格式: "任务 streamline_task_XXX_taskname 步骤 stepname 处理成功"
-            elif "处理成功" in message and "streamline_task_" in message:
-                import re
-
-                task_match = re.search(
-                    r"任务 streamline_task_\d+_(.*?) 步骤 (\w+) 处理成功", message
-                )
-
-                if task_match:
-                    task_name = task_match.group(1).strip()
-                    step_name = task_match.group(2)
-
-                    # 将步骤名映射到步骤ID
-                    step_name_to_id = {
-                        "preprocess_subtitle": 0,
-                        "separate_media": 1,
-                        "generate_reference_audio": 2,
-                        "generate_tts": 3,
-                        "align_audio": 4,
-                        "generate_aligned_srt": 5,
-                        "process_video_speed": 6,
-                        "merge_audio_video": 7,
-                    }
-
-                    step_id = step_name_to_id.get(step_name)
-                    if step_id is not None:
-                        self.update_task_step_status(task_name, step_id, "completed")
-                return
-
-            # 7. 解析步骤完成的日志（处理器内部完成日志）
-            elif any(
-                keyword in message
-                for keyword in [
-                    "字幕预处理完成",
-                    "媒体分离完成",
-                    "参考音频生成完成",
-                    "TTS生成完成",
-                    "音频对齐完成",
-                    "对齐字幕生成完成",
-                    "视频速度调整完成",
-                    "音视频合并完成",
-                ]
-            ):
-                # 这些完成日志通常紧跟在处理日志之后，可以用来确认完成状态
-                # 但由于没有task_id，我们依赖前面的基类完成日志来更新状态
-                return
-
-            # 8. 解析任务失败的日志
-            # 格式: "任务 streamline_task_XXX_taskname 在队列 step_X_stepname 处理失败"
-            elif "处理失败" in message and "streamline_task_" in message:
-                import re
-
-                task_match = re.search(
-                    r"任务 streamline_task_\d+_(.*?) 在队列 step_(\d+)_", message
-                )
-
-                if task_match:
-                    task_name = task_match.group(1).strip()
-                    step_id = int(task_match.group(2))
-                    self.update_task_step_status(task_name, step_id, "failed")
-                return
-
+                    # 可以根据具体日志内容推断步骤
+                    self.logger.debug(f"从日志解析到任务完成: {task_name}")
+            
         except Exception as e:
-            # 不要让日志解析错误影响GUI运行
+            # 不让日志解析错误影响GUI运行
             pass
 
     def update_current_step_tasks_status(self, step_id: int, status: str):
@@ -1627,110 +1434,15 @@ class DubbingGUI(QMainWindow):
             checkbox.setChecked(True)  # 现在所有项都有字幕，默认全选
             self.file_table.setCellWidget(i, 3, checkbox)
 
-    def update_task_step_status(
-        self, task_name: str, step_id: int, status: str, message: str = "", force_update: bool = False
+    def _update_task_step_status_by_row(
+        self, task_row: int, step_id: int, status: str, message: str = "", force_update: bool = False
     ):
-        """
-        更新特定任务的步骤状态（线程安全版本）
-
-        Args:
-            task_name: 任务名称（通常是视频文件名，不含扩展名）
-            step_id: 步骤ID (0-7)
-            status: 状态 ("processing", "completed", "failed")
-            message: 状态消息
-            force_update: 是否强制更新，忽略状态降级保护
-        """
-        # 使用线程锁保护状态更新
-        with self._status_update_lock:
-            return self._update_task_step_status_internal(task_name, step_id, status, message, force_update)
-
-    def _update_task_step_status_internal(
-        self, task_name: str, step_id: int, status: str, message: str = "", force_update: bool = False
-    ):
-        """内部状态更新方法"""
+        """直接通过表格行更新状态（避免名称查找）"""
         try:
-            # 生成新的时间戳和序列号
-            current_time = time.time()
-            self._global_sequence += 1
-            new_sequence = self._global_sequence
-            
-            step_key = (task_name, step_id)
-            
-            # 检查是否应该跳过此次更新（时间戳检查）
-            if not force_update:
-                last_timestamp = self._step_timestamps.get(step_key, 0)
-                last_sequence = self._step_sequence.get(step_key, 0)
-                
-                # 如果收到的是旧状态（基于时间戳），跳过更新
-                if current_time < last_timestamp + 0.1:  # 100ms内的重复更新视为可能的重复信号
-                    if new_sequence <= last_sequence:
-                        self.logger.debug(
-                            f"跳过旧状态更新: task_name={task_name}, step={step_id}, "
-                            f"status={status}, seq={new_sequence} <= {last_sequence}"
-                        )
-                        return
-            
-            # 更新时间戳和序列号
-            self._step_timestamps[step_key] = current_time
-            self._step_sequence[step_key] = new_sequence
-
-            # 查找任务在状态表格中的行索引
-            task_row = -1
-            matched_method = "unknown"
-
-            # 先尝试完全精确匹配（最优先）
-            for i in range(self.status_table.rowCount()):
-                video_item = self.status_table.item(i, 0)
-                if video_item:
-                    video_name = Path(video_item.text()).stem  # 去掉扩展名
-                    if video_name == task_name:
-                        task_row = i
-                        matched_method = "exact"
-                        break
-
-            # 如果精确匹配失败，尝试去掉特殊字符后精确匹配（第二优先）
-            if task_row == -1:
-                clean_task_name = re.sub(
-                    r"[^\w\u4e00-\u9fff]", "", task_name
-                )  # 只保留字母、数字、中文
-                for i in range(self.status_table.rowCount()):
-                    video_item = self.status_table.item(i, 0)
-                    if video_item:
-                        video_name = Path(video_item.text()).stem
-                        clean_video_name = re.sub(r"[^\w\u4e00-\u9fff]", "", video_name)
-                        if clean_task_name == clean_video_name:
-                            task_row = i
-                            matched_method = "clean_exact"
-                            break
-
-            # 最后才尝试包含匹配（容易误匹配，降低优先级）
-            if task_row == -1:
-                for i in range(self.status_table.rowCount()):
-                    video_item = self.status_table.item(i, 0)
-                    if video_item:
-                        video_name = Path(video_item.text()).stem
-                        # 只有在task_name较长时才使用包含匹配，避免误匹配
-                        if len(task_name) > 5 and (
-                            task_name in video_name or video_name in task_name
-                        ):
-                            task_row = i
-                            matched_method = "contains"
-                            break
-
-            if task_row == -1:
-                self.logger.warning(f"未找到任务 {task_name} 在状态表格中的对应行")
-                # 添加调试信息，显示所有可用的视频文件名
-                available_names = []
-                for i in range(self.status_table.rowCount()):
-                    item = self.status_table.item(i, 0)
-                    if item:
-                        available_names.append(Path(item.text()).stem)
-                self.logger.debug(f"可用的视频文件名: {available_names}")
+            # 检查表格行是否有效
+            if task_row < 0 or task_row >= self.status_table.rowCount():
+                self.logger.warning(f"表格行索引超出范围: {task_row}")
                 return
-
-            self.logger.debug(
-                f"找到匹配行: task_name={task_name}, task_row={task_row}, method={matched_method}, seq={new_sequence}"
-            )
 
             # 更新步骤状态（列索引 1-8）
             step_col = 1 + step_id
@@ -1738,161 +1450,143 @@ class DubbingGUI(QMainWindow):
 
             if not step_item:
                 step_item = QTableWidgetItem()
-                step_item.setFlags(
-                    step_item.flags() & ~Qt.ItemIsEditable
-                )  # 设置为不可编辑
+                step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)
                 self.status_table.setItem(task_row, step_col, step_item)
 
-            # 检查当前状态和新状态
-            current_status_icon = step_item.text()
-            new_status_icon = ""
-
-            # 设置状态图标和颜色
-            if status == "processing":
-                new_status_icon = "🔄"  # 处理中
-                color = QColor("#fd7e14")  # 橙色
-                tooltip = f"步骤{step_id + 1}: 处理中"
-            elif status == "completed":
-                new_status_icon = "✅"  # 完成
-                color = QColor("#198754")  # 绿色
-                tooltip = f"步骤{step_id + 1}: 已完成"
-            elif status == "failed":
-                new_status_icon = "❌"  # 失败
-                color = QColor("#dc3545")  # 红色
-                tooltip = f"步骤{step_id + 1}: 失败"
-
-                # 当步骤失败时，将后续步骤重置为未开始状态
-                self._reset_subsequent_steps(task_row, step_id)
+            # 检查状态是否需要更新
+            current_icon = step_item.text()
+            new_icon, color, tooltip = self._get_status_display(step_id, status, message)
+            
+            # 判断是否更新（增强的逻辑防止状态倒退）
+            if force_update:
+                # 即使强制更新，也要防止已完成状态被错误覆盖为处理中
+                if current_icon == "✅" and new_icon == "🔄":
+                    should_update = False
+                else:
+                    should_update = True
             else:
-                new_status_icon = "⏸️"  # 未开始
-                color = QColor("#6c757d")  # 灰色
-                tooltip = f"步骤{step_id + 1}: 未开始"
-
-            # 改进的状态更新判断逻辑
-            should_update = False
-
-            if current_status_icon != new_status_icon:
-                should_update = self._should_update_status(
-                    current_status_icon, new_status_icon, force_update, task_name, step_id, message
-                )
-
+                should_update = current_icon != new_icon or self._should_allow_status_change(current_icon, new_icon)
+            
             if should_update:
-                step_item.setText(new_status_icon)
+                step_item.setText(new_icon)
                 step_item.setForeground(color)
-
-                if message:
-                    tooltip += f" - {message}"
-
                 step_item.setToolTip(tooltip)
                 step_item.setTextAlignment(Qt.AlignCenter)
+
+                # 如果是失败状态，重置后续步骤
+                if status == "failed":
+                    self._reset_subsequent_steps(task_row, step_id)
 
                 # 更新整体状态
                 self.update_overall_task_status(task_row)
                 
-                # 强制刷新表格显示
-                if hasattr(self, 'status_table'):
-                    self.status_table.update()
-                    self.status_table.viewport().update()
-                    # 确保特定单元格的更新
-                    model_index = self.status_table.model().index(task_row, step_col)
-                    self.status_table.update(model_index)
-                    
+                # 强制刷新表格
+                self.status_table.viewport().update()
+
+        except Exception as e:
+            self.logger.error(f"更新任务行状态失败: {e}")
+
+    def update_task_step_status(
+        self, task_name: str, step_id: int, status: str, message: str = "", force_update: bool = False
+    ):
+        """
+        更新特定任务的步骤状态（简化版本，配合异步状态管理系统）
+
+        Args:
+            task_name: 任务名称（通常是视频文件名，不含扩展名）
+            step_id: 步骤ID (0-7)
+            status: 状态 ("processing", "completed", "failed")
+            message: 状态消息
+            force_update: 是否强制更新
+        """
+        with self._status_update_lock:
+            return self._update_task_step_status_simplified(task_name, step_id, status, message, force_update)
+
+    def _update_task_step_status_simplified(
+        self, task_name: str, step_id: int, status: str, message: str = "", force_update: bool = False
+    ):
+        """简化的状态更新方法（配合异步状态管理系统）"""
+        try:
+            # 查找任务行
+            task_row = self._find_task_row(task_name)
+            if task_row == -1:
+                self.logger.warning(f"未找到任务 {task_name} 在状态表格中的对应行")
+                return
+
+            # 更新步骤状态（列索引 1-8）
+            step_col = 1 + step_id
+            step_item = self.status_table.item(task_row, step_col)
+
+            if not step_item:
+                step_item = QTableWidgetItem()
+                step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)
+                self.status_table.setItem(task_row, step_col, step_item)
+
+            # 检查状态是否需要更新
+            current_icon = step_item.text()
+            new_icon, color, tooltip = self._get_status_display(step_id, status, message)
+            
+            # 判断是否更新（简化的逻辑）
+            should_update = force_update or current_icon != new_icon or self._should_allow_status_change(current_icon, new_icon)
+            
+            if should_update:
+                step_item.setText(new_icon)
+                step_item.setForeground(color)
+                step_item.setToolTip(tooltip)
+                step_item.setTextAlignment(Qt.AlignCenter)
+
+                # 如果是失败状态，重置后续步骤
+                if status == "failed":
+                    self._reset_subsequent_steps(task_row, step_id)
+
+                # 更新整体状态
+                self.update_overall_task_status(task_row)
+                
+                # 强制刷新表格
+                self.status_table.viewport().update()
+                
                 self.logger.debug(
-                    f"状态已更新: task_name={task_name}, step={step_id}, "
-                    f"{current_status_icon} -> {new_status_icon}, seq={new_sequence}"
+                    f"状态已更新: task_name={task_name}, step={step_id}, {current_icon} -> {new_icon}"
                 )
             else:
                 self.logger.debug(
-                    f"状态无变化或被保护，跳过更新: task_name={task_name}, step={step_id}, "
-                    f"current={current_status_icon}, new={new_status_icon}, seq={new_sequence}"
+                    f"状态无变化，跳过更新: task_name={task_name}, step={step_id}, {current_icon} -> {new_icon}"
                 )
 
         except Exception as e:
             self.logger.error(f"更新任务步骤状态失败: {e}")
 
-    def _should_update_status(self, current_icon: str, new_icon: str, force_update: bool, 
-                             task_name: str, step_id: int, message: str) -> bool:
-        """
-        判断是否应该更新状态（改进的逻辑）
-        
-        Args:
-            current_icon: 当前状态图标
-            new_icon: 新状态图标  
-            force_update: 是否强制更新
-            task_name: 任务名称
-            step_id: 步骤ID
-            message: 状态消息
-        
-        Returns:
-            是否应该更新状态
-        """
-        if force_update:
-            self.logger.debug(f"强制更新状态: {task_name} 步骤{step_id}, {current_icon} -> {new_icon}")
-            return True
-        
-        # 状态优先级：✅完成(3) > ❌失败(2) > 🔄处理中(1) > ⏸️未开始(0)
-        status_priority = {"✅": 3, "❌": 2, "🔄": 1, "⏸️": 0}
-        current_priority = status_priority.get(current_icon, 0)
-        new_priority = status_priority.get(new_icon, 0)
-        
-        # 允许状态更新的情况
-        update_allowed = False
-        reason = ""
-        
-        if new_priority >= current_priority:
-            # 正常的状态升级
-            update_allowed = True
-            reason = "状态升级"
-        elif new_icon == "❌":
-            # 任何状态都可以变为失败
-            update_allowed = True
-            reason = "失败状态"
-        elif current_icon == "✅" and new_icon == "🔄" and "重试" in message:
-            # 允许重试时从完成回退到处理中
-            update_allowed = True
-            reason = "重试回退"
-        elif current_icon == "❌" and new_icon == "🔄":
-            # 允许从失败回退到处理中（重试）
-            update_allowed = True
-            reason = "失败重试"
-        elif current_icon == "⏸️":
-            # 从未开始可以变为任何状态
-            update_allowed = True
-            reason = "初始状态"
-        elif abs(current_priority - new_priority) <= 1:
-            # 相邻状态间允许变化（处理并发更新）
-            update_allowed = True
-            reason = "相邻状态"
-        
-        if update_allowed:
-            self.logger.debug(
-                f"状态更新: task_name={task_name}, step={step_id}, "
-                f"{current_icon} -> {new_icon} ({reason})"
-            )
+    def _get_status_display(self, step_id: int, status: str, message: str = "") -> Tuple[str, QColor, str]:
+        """获取状态显示信息"""
+        if status == "processing":
+            return "🔄", QColor("#fd7e14"), f"步骤{step_id + 1}: 处理中{' - ' + message if message else ''}"
+        elif status == "completed":
+            return "✅", QColor("#198754"), f"步骤{step_id + 1}: 已完成{' - ' + message if message else ''}"
+        elif status == "failed":
+            return "❌", QColor("#dc3545"), f"步骤{step_id + 1}: 失败{' - ' + message if message else ''}"
         else:
-            self.logger.warning(
-                f"阻止状态降级: task_name={task_name}, step={step_id}, "
-                f"{current_icon} -> {new_icon}, message='{message}'"
-            )
+            return "⏸️", QColor("#6c757d"), f"步骤{step_id + 1}: 未开始{' - ' + message if message else ''}"
+
+    def _should_allow_status_change(self, current_icon: str, new_icon: str) -> bool:
+        """判断是否允许状态变化（简化版）"""
+        # 状态优先级：✅完成(3) > ❌失败(2) > 🔄处理中(1) > ⏸️未开始(0)
+        priority = {"✅": 3, "❌": 2, "🔄": 1, "⏸️": 0}
+        current_priority = priority.get(current_icon, 0)
+        new_priority = priority.get(new_icon, 0)
         
-        return update_allowed
+        # 允许状态升级或失败状态
+        return new_priority >= current_priority or new_icon == "❌"
 
     def update_step_status_direct(
         self, task_id: str, step_id: int, status: str, message: str = ""
     ):
-        """直接更新状态，不依赖日志解析（最高优先级）"""
+        """直接更新状态，使用任务ID直接映射到表格行"""
         try:
-            # 从task_id提取任务名: streamline_task_XXX_videoname
-            parts = task_id.split("_")
-            if len(parts) >= 3:
-                task_name = "_".join(parts[2:])  # 取videoname部分
+            # 使用映射表直接查找表格行
+            if task_id in self._task_id_to_row_map:
+                task_row = self._task_id_to_row_map[task_id]
             else:
-                task_name = task_id
-
-            # 添加调试信息
-            self.logger.debug(
-                f"直接状态更新: task_id={task_id}, task_name={task_name}, step_id={step_id}, status={status}"
-            )
+                return
 
             # 直接状态更新通常有更高权威性，使用force_update=True
             force_update = True
@@ -1901,8 +1595,9 @@ class DubbingGUI(QMainWindow):
                 force_update = True
 
             # 立即更新状态（线程安全版本）
-            self.update_task_step_status(task_name, step_id, status, message, force_update)
-
+            with self._status_update_lock:
+                self._update_task_step_status_by_row(task_row, step_id, status, message, force_update)
+                
             # 强制刷新界面（确保状态立即显示）
             if hasattr(self, 'status_table'):
                 self.status_table.viewport().update()
@@ -1911,10 +1606,116 @@ class DubbingGUI(QMainWindow):
             QApplication.processEvents()
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.logger.error(f"直接状态更新失败: {e}")
             self.logger.debug(
                 f"失败的参数: task_id={task_id}, step_id={step_id}, status={status}"
             )
+
+    def update_step_progress_direct(
+        self, task_id: str, step_id: int, progress: float, current: int, total: int, message: str = ""
+    ):
+        """直接更新步骤进度（配合异步状态管理系统）"""
+        try:
+            # 从task_id提取任务名
+            parts = task_id.split("_")
+            if len(parts) >= 3:
+                task_name = "_".join(parts[2:])
+            else:
+                task_name = task_id
+
+            # 防抖机制：避免频繁的进度更新
+            update_key = (task_name, step_id)
+            current_time = time.time()
+            
+            with self._status_update_lock:
+                last_time = self._last_update_time.get(update_key, 0)
+                # 每200ms最多更新一次进度，避免界面卡顿
+                if current_time - last_time < 0.2:
+                    return
+                self._last_update_time[update_key] = current_time
+
+            # 查找任务行
+            task_row = self._find_task_row(task_name)
+            if task_row == -1:
+                return
+
+            # 更新步骤状态为处理中（如果还不是的话）
+            step_col = 1 + step_id
+            step_item = self.status_table.item(task_row, step_col)
+            if step_item and step_item.text() != "🔄":
+                # 只有不是处理中状态才更新
+                step_item.setText("🔄")
+                step_item.setForeground(QColor("#fd7e14"))
+                step_item.setTextAlignment(Qt.AlignCenter)
+
+            # 更新工具提示显示进度
+            if step_item:
+                progress_text = f"进度: {progress:.1f}%"
+                if current > 0 and total > 0:
+                    progress_text += f" ({current}/{total})"
+                if message:
+                    progress_text += f" - {message}"
+                    
+                tooltip = f"步骤{step_id + 1}: 处理中 - {progress_text}"
+                step_item.setToolTip(tooltip)
+
+            self.logger.debug(
+                f"进度更新: {task_name} 步骤{step_id} - {progress:.1f}% ({current}/{total})"
+            )
+
+        except Exception as e:
+            self.logger.debug(f"进度更新失败: {e}")
+
+    def update_task_status_direct(
+        self, task_id: str, status: str, message: str = ""
+    ):
+        """直接更新任务整体状态（配合异步状态管理系统）"""
+        try:
+            # 从task_id提取任务名
+            parts = task_id.split("_")
+            if len(parts) >= 3:
+                task_name = "_".join(parts[2:])
+            else:
+                task_name = task_id
+
+            # 查找任务行并更新整体状态
+            task_row = self._find_task_row(task_name)
+            if task_row != -1:
+                self.update_overall_task_status(task_row)
+                
+            self.logger.debug(
+                f"任务状态更新: {task_name} - {status} - {message}"
+            )
+
+        except Exception as e:
+            self.logger.debug(f"任务状态更新失败: {e}")
+
+    def _find_task_row(self, task_name: str) -> int:
+        """查找任务在状态表格中的行索引（简化版本）"""
+        try:
+            # 精确匹配
+            for i in range(self.status_table.rowCount()):
+                video_item = self.status_table.item(i, 0)
+                if video_item:
+                    video_name = Path(video_item.text()).stem
+                    if video_name == task_name:
+                        return i
+            
+            # 清理后匹配
+            clean_task_name = re.sub(r"[^\w\u4e00-\u9fff]", "", task_name)
+            for i in range(self.status_table.rowCount()):
+                video_item = self.status_table.item(i, 0)
+                if video_item:
+                    video_name = Path(video_item.text()).stem
+                    clean_video_name = re.sub(r"[^\w\u4e00-\u9fff]", "", video_name)
+                    if clean_task_name == clean_video_name:
+                        return i
+            
+            return -1
+        except:
+            return -1
 
     def _reset_subsequent_steps(self, task_row: int, failed_step_id: int):
         """
@@ -2029,9 +1830,13 @@ class DubbingGUI(QMainWindow):
             self.logger.error(f"更新整体任务状态失败: {e}")
 
     def initialize_status_table(self, video_subtitle_pairs: List[Tuple[str, str]]):
-        """初始化处理状态表格，加载已有缓存状态"""
+        """初始化处理状态表格，加载已有缓存状态，并建立任务ID映射"""
         try:
             self.status_table.setRowCount(len(video_subtitle_pairs))
+
+            # 清空映射表
+            self._task_id_to_row_map.clear()
+            self._row_to_task_id_map.clear()
 
             for i, (video_path, subtitle_path) in enumerate(video_subtitle_pairs):
                 # 视频文件名
@@ -2042,6 +1847,15 @@ class DubbingGUI(QMainWindow):
                     video_item.flags() & ~Qt.ItemIsEditable
                 )  # 设置为不可编辑
                 self.status_table.setItem(i, 0, video_item)
+
+                # 构建任务ID并建立映射关系
+                # 任务ID格式: streamline_task_{i:03d}_{video_stem}
+                video_stem = Path(video_path).stem  # 获取不含扩展名的文件名
+                task_id = f"streamline_task_{i:03d}_{video_stem}"
+                
+                # 建立双向映射
+                self._task_id_to_row_map[task_id] = i
+                self._row_to_task_id_map[i] = task_id
 
                 # 步骤名称
                 step_names = [
@@ -2105,10 +1919,91 @@ class DubbingGUI(QMainWindow):
 
         except Exception as e:
             self.logger.error(f"初始化状态表格失败: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def debug_task_mapping(self):
+        """调试映射表状态"""
+        pass
+
+    def get_task_info_by_row(self, row: int) -> str:
+        """根据表格行获取任务信息"""
+        try:
+            if row in self._row_to_task_id_map:
+                task_id = self._row_to_task_id_map[row]
+                video_item = self.status_table.item(row, 0)
+                video_name = video_item.text() if video_item else "未知"
+                return f"行{row}: {task_id} ({video_name})"
+            else:
+                return f"行{row}: 无映射"
+        except:
+            return f"行{row}: 错误"
 
     def _load_cached_task_status(self, video_path: str) -> Optional[Dict[int, str]]:
         """
-        加载缓存中的任务状态（改进版本）
+        从统一缓存系统加载任务状态
+
+        Args:
+            video_path: 视频文件路径
+
+        Returns:
+            步骤状态字典 {step_id: status} 或 None
+        """
+        try:
+            # 构建输出目录路径
+            video_path_obj = Path(video_path)
+            clean_name = sanitize_filename(video_path_obj.stem)
+            output_dir = video_path_obj.parent / "outputs" / clean_name
+
+            self.logger.debug(f"尝试加载统一缓存: {output_dir}")
+
+            # 尝试使用统一缓存系统
+            from core.cache import UnifiedCacheManager
+            unified_cache = UnifiedCacheManager(output_dir)
+            
+            # 检查缓存目录是否存在
+            if not unified_cache.cache_dir.exists():
+                self.logger.debug(f"统一缓存目录不存在: {unified_cache.cache_dir}")
+                return self._load_legacy_cached_status(video_path)  # 回退到传统缓存
+            
+            # 获取状态摘要
+            summary = unified_cache.get_step_status_summary()
+            if "error" in summary:
+                self.logger.debug(f"获取缓存状态摘要失败: {summary['error']}")
+                return self._load_legacy_cached_status(video_path)
+            
+            # 转换为GUI需要的格式
+            step_status = {}
+            step_details = summary.get("step_details", {})
+            
+            for step_idx in range(8):
+                step_key = str(step_idx)
+                if step_key in step_details:
+                    cache_status = step_details[step_key]["status"]
+                    # 转换状态名称
+                    if cache_status == "completed":
+                        step_status[step_idx] = "completed"
+                    elif cache_status == "processing":
+                        step_status[step_idx] = "processing"
+                    elif cache_status == "failed":
+                        step_status[step_idx] = "failed"
+                    else:  # pending
+                        step_status[step_idx] = "pending"
+                else:
+                    step_status[step_idx] = "pending"
+            
+            completed_count = summary.get("completed_steps", 0)
+            self.logger.info(f"从统一缓存加载状态: {completed_count}/8 步骤已完成")
+            
+            return step_status if completed_count > 0 else None
+
+        except Exception as e:
+            self.logger.warning(f"加载统一缓存失败: {e}，尝试传统缓存")
+            return self._load_legacy_cached_status(video_path)
+
+    def _load_legacy_cached_status(self, video_path: str) -> Optional[Dict[int, str]]:
+        """
+        加载传统缓存中的任务状态（向后兼容）
 
         Args:
             video_path: 视频文件路径
@@ -2125,10 +2020,10 @@ class DubbingGUI(QMainWindow):
             # 使用pipeline_cache命名规则
             cache_file = output_dir / f"{video_path_obj.stem}_pipeline_cache.json"
 
-            self.logger.debug(f"尝试加载缓存文件: {cache_file}")
+            self.logger.debug(f"尝试加载传统缓存文件: {cache_file}")
 
             if not cache_file.exists():
-                self.logger.debug(f"缓存文件不存在: {cache_file}")
+                self.logger.debug(f"传统缓存文件不存在: {cache_file}")
                 return None
 
             # 加载缓存
@@ -2136,7 +2031,7 @@ class DubbingGUI(QMainWindow):
             cache_data = cache_manager.load_task_cache(cache_file, video_path)
 
             if not cache_data:
-                self.logger.debug("缓存数据为空")
+                self.logger.debug("传统缓存数据为空")
                 return None
 
             task_data = cache_data.get("task", {})
@@ -2241,7 +2136,7 @@ class DubbingGUI(QMainWindow):
             return status_map if status_map else None
 
         except Exception as e:
-            self.logger.debug(f"加载缓存状态失败: {e}")
+            self.logger.debug(f"加载传统缓存状态失败: {e}")
             return None
 
     def _validate_and_fix_status_sequence(self, status_map: Dict[int, str]) -> Dict[int, str]:
@@ -2393,8 +2288,16 @@ class DubbingGUI(QMainWindow):
             # 连接信号 - 统一使用批量处理的信号处理
             self.worker_thread.batch_finished.connect(self._unified_processing_finished)
 
+            # 重新连接到worker线程中实际处理任务的pipeline信号发送器
+            # 这里连接到实际发送信号的AsyncSignalEmitter实例
+            worker_signal_emitter = self.worker_thread.pipeline.status_event_manager.get_signal_emitter()
+            worker_signal_emitter.step_status_changed.connect(self.update_step_status_direct)
+            worker_signal_emitter.step_progress_changed.connect(self.update_step_progress_direct)
+            worker_signal_emitter.task_status_changed.connect(self.update_task_status_direct)
+
             # 初始化状态表格并连接日志信号（单文件和批量模式都显示）
             self.initialize_status_table(video_subtitle_pairs)
+            
             self.worker_thread.log_message.connect(self.append_log_message)
 
             # 启动线程
@@ -2649,7 +2552,6 @@ def main():
         import signal as sig
 
         def signal_handler(signum, frame):
-            print(f"\n收到系统信号 {signum}，立即退出...")
             os._exit(0)
 
         sig.signal(sig.SIGINT, signal_handler)
@@ -2660,10 +2562,9 @@ def main():
         app.exec()
 
     except Exception as e:
-        print(f"应用程序启动失败: {e}")
+        pass
 
     # 最终确保退出
-    print("主函数结束，强制退出进程")
     os._exit(0)
 
 

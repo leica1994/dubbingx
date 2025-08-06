@@ -6,9 +6,13 @@
 
 from .cache_types import CacheMetadata, CacheVersion
 from .task_cache import TaskCacheManager
+from .unified_cache_manager import UnifiedCacheManager
+from .step_cache_manager import StepCacheManager
 
 __all__ = [
     "TaskCacheManager",
+    "UnifiedCacheManager", 
+    "StepCacheManager",
     "CacheVersion",
     "CacheMetadata",
 ]

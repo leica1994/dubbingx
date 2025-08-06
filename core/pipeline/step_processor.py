@@ -129,11 +129,43 @@ class StepProcessor(ABC):
             # 设置任务步骤结果
             task.set_step_result(self.step_id, result)
 
-            # 保存缓存（如果任务有路径信息）
+            # 使用统一缓存系统保存步骤结果
+            if hasattr(task, 'pipeline_ref') and task.pipeline_ref:
+                try:
+                    step_cache = task.pipeline_ref.get_step_cache_manager(
+                        task.task_id, self.step_id, self.step_name
+                    )
+                    if step_cache:
+                        if result.success:
+                            # 保存成功结果
+                            step_cache.save_step_result(
+                                result_data=result.data if result.data else {},
+                                result_files=[],  # 处理器可以重写此方法提供文件列表
+                                metadata={"processing_time": processing_time}
+                            )
+                        elif getattr(result, "partial_success", False):
+                            # 部分成功，更新进度但不标记完成
+                            step_cache.update_progress(
+                                current_item=step_detail.current_item,
+                                total_items=step_detail.total_items,
+                                message=result.message,
+                                metadata={"processing_time": processing_time}
+                            )
+                        else:
+                            # 标记失败
+                            step_cache.mark_step_failed(
+                                error_message=result.error or "未知错误",
+                                metadata={"processing_time": processing_time}
+                            )
+                        self.logger.debug(f"任务 {task.task_id} 步骤缓存已更新")
+                except Exception as cache_error:
+                    self.logger.warning(f"更新步骤缓存失败: {cache_error}")
+
+            # 保存传统缓存（向后兼容）
             if task.paths and "pipeline_cache" in task.paths:
                 cache_path = Path(task.paths["pipeline_cache"])
                 if task.save_to_cache(cache_path):
-                    self.logger.debug(f"任务 {task.task_id} 缓存已更新")
+                    self.logger.debug(f"任务 {task.task_id} 传统缓存已更新")
 
             return result
 
@@ -288,16 +320,63 @@ class StepProcessor(ABC):
                 self._processing_times = self._processing_times[-1000:]
 
     def _notify_status_change(self, task: Task, status: str, message: str = "") -> None:
-        """通知流水线状态变化"""
+        """通知流水线状态变化 - 使用异步状态管理器"""
+        try:
+            self.logger.info(f"🔔 开始通知状态变化: task={task.task_id}, step={self.step_id}, status={status}")
+            
+            if hasattr(task, "pipeline_ref") and task.pipeline_ref:
+                self.logger.info(f"✅ 找到pipeline_ref: {type(task.pipeline_ref)}")
+                
+                # 获取异步状态管理器
+                status_manager = getattr(task.pipeline_ref, "status_event_manager", None)
+                if status_manager:
+                    self.logger.info(f"✅ 找到status_event_manager: {type(status_manager)}")
+                    
+                    # 直接使用异步状态管理器发送事件
+                    if status == "processing":
+                        # 获取步骤详情来确定总项目数
+                        step_detail = task.get_step_detail(self.step_id)
+                        total_items = step_detail.total_items if step_detail else 1
+                        self.logger.info(f"📤 发送processing事件: total_items={total_items}")
+                        status_manager.notify_step_started(task.task_id, self.step_id, total_items, message)
+                    elif status == "completed":
+                        self.logger.info(f"📤 发送completed事件")
+                        status_manager.notify_step_completed(task.task_id, self.step_id, message)
+                    elif status == "failed":
+                        self.logger.info(f"📤 发送failed事件")
+                        status_manager.notify_step_failed(task.task_id, self.step_id, message, message)
+                    else:
+                        self.logger.warning(f"❌ 未处理的状态类型: {status}")
+                        
+                    self.logger.info(f"🎯 状态事件发送完成")
+                else:
+                    self.logger.warning(f"❌ 没有找到status_event_manager，回退到同步方式")
+                    # 回退到原来的同步方式（兼容性）
+                    task.pipeline_ref.notify_step_status(
+                        task.task_id, self.step_id, status, message
+                    )
+            else:
+                self.logger.warning(f"❌ 没有找到pipeline_ref")
+                
+        except Exception as e:
+            self.logger.error(
+                f"❌ 通知状态变化失败: {e}", exc_info=True
+            )  # 改为error级别，并显示详细堆栈
+
+    def _notify_progress_change(self, task: Task, current_item: int, total_items: int, message: str = "") -> None:
+        """通知进度变化 - 使用异步状态管理器"""
         try:
             if hasattr(task, "pipeline_ref") and task.pipeline_ref:
-                task.pipeline_ref.notify_step_status(
-                    task.task_id, self.step_id, status, message
-                )
+                # 获取异步状态管理器
+                status_manager = getattr(task.pipeline_ref, "status_event_manager", None)
+                if status_manager:
+                    # 发送进度更新事件
+                    status_manager.notify_step_progress(
+                        task.task_id, self.step_id, current_item, total_items, message
+                    )
+                
         except Exception as e:
-            self.logger.debug(
-                f"通知状态变化失败: {e}"
-            )  # 使用debug级别，避免干扰主要日志
+            self.logger.debug(f"通知进度变化失败: {e}")
 
     def get_next_step_id(self) -> Optional[int]:
         """获取下一个步骤ID"""

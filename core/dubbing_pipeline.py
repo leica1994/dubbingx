@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from PySide6.QtCore import QObject, Signal
 
 from core.util import sanitize_filename
+from core.cache import UnifiedCacheManager, StepCacheManager
+from core.status import StatusEventManager
 from .pipeline import Task, TaskScheduler
 from .pipeline.processors import (
     AlignAudioProcessor,
@@ -22,178 +24,8 @@ from .pipeline.processors import (
 )
 
 
-class StatusNotificationManager:
-    """状态通知管理器 - 统一管理状态变化通知，避免重复发送"""
 
-    def __init__(self, pipeline_ref):
-        self.pipeline_ref = pipeline_ref
-        self.logger = logging.getLogger(f"{__name__}.StatusNotificationManager")
-        
-        # 状态通知缓存和锁
-        self._lock = threading.Lock()
-        self._last_notifications = {}  # 格式: {(task_id, step_id): (status, timestamp, sequence)}
-        self._global_sequence = 0
-        
-        # 通知去重时间窗口（毫秒）
-        self._dedup_window_ms = 100
-
-    def notify_step_status(self, task_id: str, step_id: int, status: str, message: str = "") -> bool:
-        """
-        统一的状态通知入口
-        
-        Args:
-            task_id: 任务ID
-            step_id: 步骤ID
-            status: 状态
-            message: 消息
-            
-        Returns:
-            是否成功发送通知（False表示被去重过滤）
-        """
-        with self._lock:
-            current_time = time.time() * 1000  # 转换为毫秒
-            self._global_sequence += 1
-            new_sequence = self._global_sequence
-            
-            notification_key = (task_id, step_id)
-            
-            # 检查是否需要过滤重复通知
-            if notification_key in self._last_notifications:
-                last_status, last_timestamp, last_sequence = self._last_notifications[notification_key]
-                
-                # 如果状态相同且在去重时间窗口内，过滤掉
-                if (status == last_status and 
-                    current_time - last_timestamp < self._dedup_window_ms):
-                    self.logger.debug(
-                        f"过滤重复通知: task_id={task_id}, step_id={step_id}, "
-                        f"status={status}, 间隔={current_time - last_timestamp:.1f}ms"
-                    )
-                    return False
-            
-            # 记录新的通知
-            self._last_notifications[notification_key] = (status, current_time, new_sequence)
-            
-            # 发送通知
-            try:
-                self.pipeline_ref.step_status_changed.emit(task_id, step_id, status, message)
-                self.logger.debug(
-                    f"状态通知已发送: task_id={task_id}, step_id={step_id}, "
-                    f"status={status}, seq={new_sequence}"
-                )
-                return True
-            except Exception as e:
-                self.logger.error(f"发送状态通知失败: {e}")
-                return False
-
-    def clear_task_notifications(self, task_id: str):
-        """清理指定任务的通知记录"""
-        with self._lock:
-            keys_to_remove = [key for key in self._last_notifications if key[0] == task_id]
-            for key in keys_to_remove:
-                del self._last_notifications[key]
-            
-            if keys_to_remove:
-                self.logger.debug(f"已清理任务 {task_id} 的 {len(keys_to_remove)} 个通知记录")
-
-    def get_stats(self) -> Dict[str, Any]:
-        """获取通知管理器统计信息"""
-        with self._lock:
-            return {
-                "total_notifications": len(self._last_notifications),
-                "global_sequence": self._global_sequence,
-                "dedup_window_ms": self._dedup_window_ms
-            }
-
-    def check_status_consistency(self) -> Dict[str, Any]:
-        """
-        检查状态一致性
-        
-        Returns:
-            一致性检查报告
-        """
-        with self._lock:
-            report = {
-                "total_tracked_notifications": len(self._last_notifications),
-                "inconsistencies": [],
-                "warnings": [],
-                "recommendations": []
-            }
-            
-            # 按任务分组检查
-            task_status = {}
-            for (task_id, step_id), (status, timestamp, sequence) in self._last_notifications.items():
-                if task_id not in task_status:
-                    task_status[task_id] = {}
-                task_status[task_id][step_id] = {
-                    "status": status,
-                    "timestamp": timestamp,
-                    "sequence": sequence
-                }
-            
-            # 检查每个任务的状态一致性
-            for task_id, steps in task_status.items():
-                task_inconsistencies = []
-                
-                # 检查步骤顺序一致性
-                completed_steps = [step_id for step_id, info in steps.items() if info["status"] == "completed"]
-                processing_steps = [step_id for step_id, info in steps.items() if info["status"] == "processing"]
-                failed_steps = [step_id for step_id, info in steps.items() if info["status"] == "failed"]
-                
-                # 1. 检查是否有跳跃完成的步骤
-                if completed_steps:
-                    completed_steps.sort()
-                    for i, step_id in enumerate(completed_steps):
-                        if i > 0 and step_id != completed_steps[i-1] + 1:
-                            # 检查中间是否有失败的步骤
-                            gap_steps = range(completed_steps[i-1] + 1, step_id)
-                            gap_failed = [s for s in gap_steps if s in failed_steps]
-                            if not gap_failed:
-                                task_inconsistencies.append(
-                                    f"步骤跳跃完成：从步骤 {completed_steps[i-1]} 跳到步骤 {step_id}"
-                                )
-                
-                # 2. 检查处理中的步骤是否合理
-                for step_id in processing_steps:
-                    prev_steps = [s for s in completed_steps if s < step_id]
-                    expected_prev = list(range(0, step_id))
-                    missing_prev = [s for s in expected_prev if s not in prev_steps and s not in failed_steps]
-                    
-                    if missing_prev:
-                        task_inconsistencies.append(
-                            f"步骤 {step_id} 处理中，但前置步骤 {missing_prev} 未完成"
-                        )
-                
-                # 3. 检查时间戳异常
-                timestamps = [(step_id, info["timestamp"]) for step_id, info in steps.items()]
-                timestamps.sort(key=lambda x: x[1])  # 按时间戳排序
-                
-                for i in range(1, len(timestamps)):
-                    curr_step, curr_time = timestamps[i]
-                    prev_step, prev_time = timestamps[i-1]
-                    
-                    # 如果后面的步骤时间戳更早，可能有问题
-                    if curr_step < prev_step and curr_time > prev_time:
-                        task_inconsistencies.append(
-                            f"时间戳异常：步骤 {curr_step} 的时间戳晚于步骤 {prev_step}"
-                        )
-                
-                if task_inconsistencies:
-                    report["inconsistencies"].append({
-                        "task_id": task_id,
-                        "issues": task_inconsistencies
-                    })
-            
-            # 生成警告和建议
-            if len(self._last_notifications) > 1000:
-                report["warnings"].append("通知记录数量过多，建议定期清理")
-            
-            inconsistency_count = len(report["inconsistencies"])
-            if inconsistency_count > 0:
-                report["warnings"].append(f"发现 {inconsistency_count} 个任务存在状态不一致")
-                report["recommendations"].append("建议检查任务流转逻辑和状态更新机制")
-            
-            return report
-
+# 注意：原来的StatusNotificationManager已被替换为更高效的异步StatusEventManager
 
 class DubbingPaths:
     """配音文件路径管理"""
@@ -441,11 +273,24 @@ class StreamlinePipeline(QObject):
         self.logger = logging.getLogger(__name__)
         self.output_dir = Path(output_dir) if output_dir else None
         
-        # 初始化状态通知管理器
-        self.status_notification_manager = StatusNotificationManager(self)
+        # 初始化异步状态事件管理器
+        self.status_event_manager = StatusEventManager(self)
+        
+        # 统一缓存管理器字典 {task_id: UnifiedCacheManager}
+        self.cache_managers: Dict[str, UnifiedCacheManager] = {}
+        
+        # 连接异步信号到现有GUI信号
+        signal_emitter = self.status_event_manager.get_signal_emitter()
+        signal_emitter.step_status_changed.connect(self.step_status_changed)
+        signal_emitter.step_progress_changed.connect(self._on_step_progress_changed)
         
         self.task_scheduler = self._initialize_task_scheduler()
         self.logger.info("StreamlinePipeline 初始化完成")
+
+    def _on_step_progress_changed(self, task_id: str, step_id: int, progress: float, current: int, total: int, message: str):
+        """处理步骤进度变化信号（可以在这里添加额外的进度处理逻辑）"""
+        # 目前只是转发，未来可以添加进度汇总、状态检查等逻辑
+        pass
 
     def _initialize_task_scheduler(self):
         """初始化任务调度器和处理器"""
@@ -469,10 +314,21 @@ class StreamlinePipeline(QObject):
     def notify_step_status(
         self, task_id: str, step_id: int, status: str, message: str = ""
     ):
-        """通过状态管理器统一处理状态通知"""
-        return self.status_notification_manager.notify_step_status(
-            task_id, step_id, status, message
-        )
+        """通过异步状态管理器统一处理状态通知"""
+        try:
+            if status == "processing":
+                self.status_event_manager.notify_step_started(task_id, step_id, message=message)
+            elif status == "completed":
+                self.status_event_manager.notify_step_completed(task_id, step_id, message=message)
+            elif status == "failed":
+                self.status_event_manager.notify_step_failed(task_id, step_id, error_message=message, message=message)
+            else:
+                # 其他状态，记录日志但不处理
+                self.logger.debug(f"未知状态类型: {status}, 任务: {task_id}, 步骤: {step_id}")
+            return True
+        except Exception as e:
+            self.logger.error(f"状态通知失败: {e}")
+            return False
 
     def process_batch_streamline(
         self,
@@ -521,15 +377,57 @@ class StreamlinePipeline(QObject):
     ):
         """创建或从缓存恢复任务"""
         task = None
+        
+        # 初始化统一缓存管理器
+        cache_manager = UnifiedCacheManager(paths.output_dir)
+        self.cache_managers[task_id] = cache_manager
+        
+        # 注册缓存管理器到异步状态管理器
+        self.status_event_manager.register_cache_manager(task_id, cache_manager)
+        
         if resume_from_cache:
-            task = Task.load_from_cache(paths.pipeline_cache, video_path, subtitle_path)
-            if task:
-                self.logger.info(f"从缓存恢复任务: {task_id}")
-                task.task_id = task_id
-                # 确保pipeline_ref被正确设置
-                task.pipeline_ref = self
-            else:
-                self.logger.info(f"未找到有效缓存，创建新任务: {task_id}")
+            # 使用统一缓存系统恢复任务
+            try:
+                # 初始化缓存结构（如果不存在）
+                cache_manager.initialize_cache(task_id, video_path, subtitle_path)
+                
+                # 获取任务恢复点
+                resume_point = cache_manager.get_task_resume_point()
+                
+                if resume_point > 0:
+                    # 有已完成的步骤，从缓存恢复
+                    completed_steps = cache_manager.get_completed_steps()
+                    self.logger.info(f"从缓存恢复任务: {task_id}, 已完成步骤: {list(completed_steps)}, 恢复点: {resume_point}")
+                    
+                    # 创建任务并设置恢复状态
+                    task = Task(
+                        task_id=task_id, 
+                        video_path=video_path, 
+                        subtitle_path=subtitle_path
+                    )
+                    task.current_step = resume_point
+                    
+                    # 设置已完成的步骤结果
+                    for step_id in completed_steps:
+                        step_result = cache_manager.load_step_result(step_id)
+                        if step_result:
+                            task.step_results[str(step_id)] = {
+                                "success": True,
+                                "message": f"从缓存恢复: 步骤 {step_id}",
+                                "data": step_result,
+                                "error": None,
+                                "processing_time": 0.0,
+                                "partial_success": False,
+                                "step_detail": None,
+                            }
+                else:
+                    self.logger.info(f"缓存中无已完成步骤，创建新任务: {task_id}")
+                    
+            except Exception as e:
+                self.logger.warning(f"从缓存恢复任务失败: {e}，创建新任务")
+        else:
+            # 初始化新的缓存结构
+            cache_manager.initialize_cache(task_id, video_path, subtitle_path)
 
         if task is None:
             task = Task(
@@ -540,6 +438,17 @@ class StreamlinePipeline(QObject):
         task.pipeline_ref = self
         self.logger.debug(f"任务 {task_id} 的pipeline_ref已设置")
         return task
+
+    def get_cache_manager(self, task_id: str) -> Optional[UnifiedCacheManager]:
+        """获取任务的统一缓存管理器"""
+        return self.cache_managers.get(task_id)
+
+    def get_step_cache_manager(self, task_id: str, step_id: int, step_name: str) -> Optional[StepCacheManager]:
+        """获取步骤专用缓存管理器"""
+        unified_cache = self.get_cache_manager(task_id)
+        if unified_cache:
+            return StepCacheManager(unified_cache, step_id, step_name)
+        return None
 
     def _setup_task_paths(self, task, paths: DubbingPaths):
         """设置任务路径信息"""
