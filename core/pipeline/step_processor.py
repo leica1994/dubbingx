@@ -57,10 +57,7 @@ class StepProcessor(ABC):
             处理结果
         """
         start_time = time.time()
-        self.logger.info(f"开始处理任务 {task.task_id} - 步骤: {self.step_name}")
-
-        # 更新任务状态
-        task.update_status(TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}")
+        self.logger.info(f"准备处理任务 {task.task_id} - 步骤: {self.step_name}")
 
         try:
             # 验证任务是否可以处理
@@ -88,22 +85,11 @@ class StepProcessor(ABC):
                 self.logger.info(
                     f"任务 {task.task_id} 步骤 {self.step_name} 从中断处继续执行"
                 )
-                step_detail.status = StepStatus.PROCESSING
-                # 发送处理中状态
-                self._notify_status_change(task, "processing", "从中断处继续执行")
-                result = self._resume_from_interruption(task, step_detail)
+                result = self._resume_from_interruption_with_status_update(task, step_detail)
             else:
                 # 步骤未进行，从头开始
                 self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 开始执行")
-                step_detail.status = StepStatus.PROCESSING
-                task.update_status(
-                    TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}"
-                )
-                # 发送处理中状态
-                self._notify_status_change(
-                    task, "processing", f"开始执行步骤: {self.step_name}"
-                )
-                result = self._execute_process(task, step_detail)
+                result = self._execute_process_with_status_update(task, step_detail)
 
             # 记录处理时间
             processing_time = time.time() - start_time
@@ -186,6 +172,52 @@ class StepProcessor(ABC):
             处理结果
         """
         pass
+
+    def _execute_process_with_status_update(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
+        """
+        执行处理逻辑并更新状态（包装方法）
+        
+        Args:
+            task: 要处理的任务
+            step_detail: 步骤详细信息
+            
+        Returns:
+            处理结果
+        """
+        # 只有在真正开始执行处理逻辑时才设置PROCESSING状态和发送通知
+        self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 真正开始处理")
+        task.update_status(TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}")
+        step_detail.status = StepStatus.PROCESSING
+        self._notify_status_change(
+            task, "processing", f"开始执行步骤: {self.step_name}"
+        )
+        
+        # 调用具体的处理逻辑
+        return self._execute_process(task, step_detail)
+        
+    def _resume_from_interruption_with_status_update(
+        self, task: Task, step_detail: StepProgressDetail
+    ) -> ProcessResult:
+        """
+        从中断处恢复执行并更新状态（包装方法）
+        
+        Args:
+            task: 要处理的任务
+            step_detail: 步骤详细信息
+            
+        Returns:
+            处理结果
+        """
+        # 只有在真正开始执行恢复逻辑时才设置PROCESSING状态和发送通知
+        self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 真正开始从中断处恢复")
+        task.update_status(TaskStatus.PROCESSING, f"正在执行步骤: {self.step_name}")
+        step_detail.status = StepStatus.PROCESSING
+        self._notify_status_change(task, "processing", "从中断处继续执行")
+        
+        # 调用具体的恢复逻辑
+        return self._resume_from_interruption(task, step_detail)
 
     def _resume_from_interruption(
         self, task: Task, step_detail: StepProgressDetail

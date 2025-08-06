@@ -349,6 +349,9 @@ class IntelligentTextProcessor:
         original_text = text
         text = self._remove_problematic_unicode_chars(text)
 
+        # 🚨 新增：修复错误的数字格式（如1。2 → 1.2）
+        text = self._fix_malformed_numbers(text)
+
         # 1. 删除各种括号内容（TTS不需要括号内的注释、说明等）
         text = self._remove_brackets_content(text)
 
@@ -468,6 +471,69 @@ class IntelligentTextProcessor:
 
         return result.strip()
 
+    def _fix_malformed_numbers(self, text: str) -> str:
+        """
+        修复错误的数字格式
+        
+        常见错误格式：
+        1. 中文句号当小数点：1。2 → 1.2
+        2. 中文冒号当时间分隔符：12：34 → 12:34  
+        3. 全角数字：１２３ → 123
+        4. 混合标点：1，000 → 1,000（如果是千分位）
+        
+        检测规则：
+        - 数字+中文句号+数字 → 小数
+        - 数字+中文冒号+数字 → 时间（如果符合时间格式）
+        - 全角数字 → 半角数字
+        """
+        if not text:
+            return ""
+        
+        import re
+        
+        # 1. 修复全角数字 → 半角数字（优先处理）
+        fullwidth_digits = '０１２３４５６７８９'
+        halfwidth_digits = '0123456789'
+        translation_table = str.maketrans(fullwidth_digits, halfwidth_digits)
+        text = text.translate(translation_table)
+        
+        # 2. 修复全角标点
+        text = text.replace('．', '.')  # 全角句号 → 半角句号
+        
+        # 3. 修复IP地址格式：192。168。1。1 → 192.168.1.1（优先处理复杂格式）
+        ip_pattern = re.compile(r'(\d+)。(\d+)。(\d+)。(\d+)')
+        text = ip_pattern.sub(r'\1.\2.\3.\4', text)
+        
+        # 4. 修复版本号格式：v。1 → v.1, V。2 → V.2
+        version_pattern = re.compile(r'([vV])。(\d+)')
+        text = version_pattern.sub(r'\1.\2', text)
+        
+        # 5. 修复中文句号作小数点的情况：1。2 → 1.2
+        # 匹配：数字 + 中文句号 + 1-3位数字（小数通常不超过3位）
+        decimal_pattern = re.compile(r'(\d+)。(\d{1,3})(?!\d)')
+        text = decimal_pattern.sub(r'\1.\2', text)
+        
+        # 6. 修复中文冒号作时间分隔符：12：34 → 12:34
+        # 匹配时间格式：0-23时：0-59分 或 1-12时：0-59分
+        time_pattern = re.compile(r'(\d{1,2})：(\d{1,2})')
+        
+        def fix_time_format(match):
+            hours = int(match.group(1))
+            minutes = int(match.group(2))
+            # 验证是否为合理的时间格式
+            if (0 <= hours <= 23 and 0 <= minutes <= 59) or (1 <= hours <= 12 and 0 <= minutes <= 59):
+                return f"{match.group(1)}:{match.group(2)}"
+            else:
+                # 如果不是合理时间，保持原样
+                return match.group(0)
+        
+        text = time_pattern.sub(fix_time_format, text)
+        
+        # 7. 修复全角冒号
+        text = text.replace('：', ':')  # 全角冒号 → 半角冒号（处理剩余的）
+        
+        return text
+
     def _gentle_bracket_removal(self, text: str) -> str:
         """
         温和的括号移除策略
@@ -536,10 +602,8 @@ class IntelligentTextProcessor:
         elif language == LanguageType.ENGLISH:
             text = self._english_normalization(text)
 
-        # 标点符号标准化
-        for punct, replacement in self.PUNCTUATION_MAP.items():
-            if punct in text:
-                text = text.replace(punct, replacement)
+        # 智能标点符号标准化（保护数字格式）
+        text = self._smart_punctuation_replacement(text)
 
         # 最终清理
         text = self.whitespace_pattern.sub(" ", text).strip()
@@ -731,13 +795,19 @@ class IntelligentTextProcessor:
 
     def _convert_number_to_chinese(self, number_str: str) -> str:
         """
-        将阿拉伯数字转换为中文数字
-
+        将阿拉伯数字转换为中文数字（优化版）
+        
         支持：
         - 个位数：0-9 → 零-九
-        - 十位数：10-99 → 十-九十九
+        - 十位数：10-99 → 十-九十九  
         - 百位数：100-999 → 一百-九百九十九
+        - 千位数：1000-9999 → 一千-九千九百九十九
         - 更大数字：逐位转换
+        
+        特殊规则：
+        - 10读作"十"而不是"一十"
+        - 20读作"二十"而不是"两十"
+        - 处理零的读音规则
         """
         if not number_str.isdigit():
             return number_str
@@ -745,7 +815,7 @@ class IntelligentTextProcessor:
         # 基础数字映射
         digit_map = {
             "0": "零",
-            "1": "一",
+            "1": "一", 
             "2": "二",
             "3": "三",
             "4": "四",
@@ -799,6 +869,23 @@ class IntelligentTextProcessor:
                 if ones > 0:
                     result += digit_map[str(ones)]
             return result
+            
+        # 处理1000-9999  
+        elif num < 10000:
+            thousands = num // 1000
+            remainder = num % 1000
+            result = digit_map[str(thousands)] + "千"
+            
+            if remainder == 0:
+                return result
+            elif remainder < 100:
+                if remainder < 10:
+                    result += "零零" + digit_map[str(remainder)]
+                else:
+                    result += "零" + self._convert_number_to_chinese(str(remainder))
+            else:
+                result += self._convert_number_to_chinese(str(remainder))
+            return result
 
         # 对于更大的数字，简化处理：逐位转换
         else:
@@ -827,12 +914,214 @@ class IntelligentTextProcessor:
 
         return "".join(digit_map.get(digit, digit) for digit in decimal_str)
 
+    def _smart_digit_replacement(self, text: str, number_map: dict) -> str:
+        """
+        智能数字替换，避免错误转换小数、时间等格式
+        
+        保护格式：
+        - 小数：1.2, 3.14, 0.5
+        - 时间：12:34, 9:15
+        - 版本号：v1.0, 2.1.3
+        - 序号：1), 2)
+        - 百分比：已在前面处理
+        
+        只转换真正独立的单个数字
+        """
+        if not text:
+            return ""
+        
+        import re
+        
+        # 创建保护模式：匹配需要保护的数字格式
+        protected_patterns = [
+            r'\d+\.\d+',           # 小数：1.2, 3.14
+            r'\d+:\d+:\d+',        # 长时间：12:34:56
+            r'\d+:\d+',            # 时间：12:34, 9:15  
+            r'\d+\.\d+\.\d+\.\d+', # IP地址：192.168.1.1
+            r'\d+\.\d+\.\d+',      # 版本号：1.2.3
+            r'v\d+\.\d+',          # 版本号：v1.0
+            r'V\d+\.\d+',          # 版本号：V1.0
+            r'\d+\)',              # 序号：1), 2)
+            r'\(\d+\)',            # 括号数字：(1), (2)
+            r'\d+、',              # 中文序号：1、2、
+            r'第\d+',              # 序数：第1, 第2
+            r'\d+[年月日号]',       # 日期：2023年, 12月, 15日, 1号
+            r'\d+[点时分秒]',       # 时间单位：8点, 12时, 30分
+            r'\d+[个件条项次遍回趟]', # 量词：3个, 5件, 2次
+            r'\d+[万千百十亿]',     # 中文数量：3万, 5千
+            r'\d+[页章节段行列]',   # 文档结构：第3页, 第5章
+            r'\d+[楼层]',          # 位置：3楼, 5层
+            r'\d+[级岁届期]',      # 等级时间：3级, 20岁
+            r'[约大概超过不到]\d+', # 数量修饰：约3, 大概5
+            r'\d+多',              # 数量：3多, 5多
+            r'[第共总计累计约]\d+', # 前缀：第3, 共5, 总计8
+        ]
+        
+        # 合并所有保护模式
+        combined_pattern = '|'.join(f'({pattern})' for pattern in protected_patterns)
+        protected_regex = re.compile(combined_pattern)
+        
+        # 找到所有需要保护的数字格式
+        protected_matches = []
+        for match in protected_regex.finditer(text):
+            protected_matches.append((match.start(), match.end(), match.group()))
+        
+        # 创建临时占位符来保护这些格式
+        protected_text = text
+        placeholders = {}
+        for i, (start, end, matched_text) in enumerate(reversed(protected_matches)):
+            placeholder = f"XPROTECTEDNUMX{i}X"
+            placeholders[placeholder] = matched_text
+            protected_text = protected_text[:start] + placeholder + protected_text[end:]
+        
+        # 在保护后的文本上应用单独数字转换
+        single_digit_pattern = re.compile(r'\b\d\b')
+        
+        def replace_single_digit(match):
+            digit = match.group()
+            return number_map.get(digit, digit)
+        
+        converted_text = single_digit_pattern.sub(replace_single_digit, protected_text)
+        
+        # 恢复被保护的数字格式
+        for placeholder, original_text in placeholders.items():
+            converted_text = converted_text.replace(placeholder, original_text)
+        
+        return converted_text
+
+    def _smart_punctuation_replacement(self, text: str) -> str:
+        """
+        智能标点符号替换，保护数字格式中的标点符号
+        
+        会保护以下格式中的标点符号不被替换：
+        - 小数：1.2, 3.14
+        - 时间：12:34, 9:15
+        - 版本号：v1.0, 2.1.3
+        - IP地址：192.168.1.1
+        - 序号：1), 2)
+        
+        其他位置的标点符号会被替换为中文标点符号
+        """
+        if not text:
+            return ""
+        
+        import re
+        
+        # 使用与_smart_digit_replacement相同的保护模式
+        protected_patterns = [
+            r'\d+\.\d+',           # 小数：1.2, 3.14
+            r'\d+:\d+:\d+',        # 长时间：12:34:56
+            r'\d+:\d+',            # 时间：12:34, 9:15  
+            r'\d+\.\d+\.\d+\.\d+', # IP地址：192.168.1.1
+            r'\d+\.\d+\.\d+',      # 版本号：1.2.3
+            r'v\d+\.\d+',          # 版本号：v1.0
+            r'V\d+\.\d+',          # 版本号：V1.0
+            r'\d+\)',              # 序号：1), 2)
+            r'\(\d+\)',            # 括号数字：(1), (2)
+        ]
+        
+        # 合并保护模式
+        combined_pattern = '|'.join(f'({pattern})' for pattern in protected_patterns)
+        protected_regex = re.compile(combined_pattern)
+        
+        # 找到需要保护的内容
+        protected_matches = []
+        for match in protected_regex.finditer(text):
+            protected_matches.append((match.start(), match.end(), match.group()))
+        
+        # 使用占位符保护这些内容
+        protected_text = text
+        placeholders = {}
+        for i, (start, end, matched_text) in enumerate(reversed(protected_matches)):
+            placeholder = f"XPROTECTEDPUNCTX{i}X"
+            placeholders[placeholder] = matched_text
+            protected_text = protected_text[:start] + placeholder + protected_text[end:]
+        
+        # 在保护后的文本上进行标点符号替换
+        for punct, replacement in self.PUNCTUATION_MAP.items():
+            if punct in protected_text:
+                protected_text = protected_text.replace(punct, replacement)
+        
+        # 恢复被保护的内容
+        for placeholder, original_text in placeholders.items():
+            protected_text = protected_text.replace(placeholder, original_text)
+        
+        return protected_text
+
+    def _smart_case_and_alphanumeric_processing(self, text: str) -> str:
+        """
+        智能大写字母和字母数字处理，保护特殊格式
+        
+        简化版本：只处理不在保护区域内的字符
+        """
+        if not text:
+            return ""
+        
+        import re
+        
+        # 保护模式：不需要插入空格的格式
+        protected_patterns = [
+            r'v\d+\.\d+',          # 版本号：v1.0
+            r'V\d+\.\d+',          # 版本号：V1.0
+            r'IP\d+\.\d+\.\d+\.\d+', # IP地址格式（数字IP）
+            r'IP地址',              # IP地址文本
+            r'API\d*',             # API相关
+            r'URL\d*',             # URL相关
+            r'CPU\d*',             # CPU相关
+            r'GPU\d*',             # GPU相关
+        ]
+        
+        # 合并保护模式
+        combined_pattern = '|'.join(f'({pattern})' for pattern in protected_patterns)
+        protected_regex = re.compile(combined_pattern)
+        
+        # 找到需要保护的区域
+        protected_ranges = []
+        for match in protected_regex.finditer(text):
+            protected_ranges.append((match.start(), match.end()))
+        
+        def is_in_protected_range(pos):
+            """检查位置是否在保护区域内"""
+            for start, end in protected_ranges:
+                if start <= pos < end:
+                    return True
+            return False
+        
+        # 应用大写字母前插空格规则（跳过保护区域）
+        result_chars = []
+        i = 0
+        while i < len(text):
+            char = text[i]
+            
+            # 检查大写字母插空格规则
+            if i > 0 and char.isupper() and not is_in_protected_range(i):
+                # 大写字母前插入空格
+                result_chars.append(' ')
+                result_chars.append(char)
+            elif i < len(text) - 1:
+                # 检查字母数字间插空格规则
+                next_char = text[i + 1]
+                if ((char.isalpha() and next_char.isdigit()) or (char.isdigit() and next_char.isalpha())):
+                    if not is_in_protected_range(i) and not is_in_protected_range(i + 1):
+                        result_chars.append(char)
+                        result_chars.append(' ')
+                    else:
+                        result_chars.append(char)
+                else:
+                    result_chars.append(char)
+            else:
+                result_chars.append(char)
+            
+            i += 1
+        
+        return ''.join(result_chars)
+
     def _chinese_normalization(self, text: str) -> str:
         """中文文本特殊处理"""
         if not text:
             return ""
 
-        # 数字转中文（简化版）
+        # 数字转中文（智能版）
         number_map = {
             "0": "零",
             "1": "一",
@@ -850,7 +1139,8 @@ class IntelligentTextProcessor:
             digit = match.group()
             return number_map.get(digit, digit)
 
-        text = self.single_digit_pattern.sub(replace_single_digit, text)
+        # 智能数字处理：保护小数、百分比等格式，只转换真正的单独数字
+        text = self._smart_digit_replacement(text, number_map)
         return text
 
     def _english_normalization(self, text: str) -> str:
