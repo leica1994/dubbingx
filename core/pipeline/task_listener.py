@@ -284,6 +284,21 @@ class TaskFlowListener(TaskListener):
             pass
         return None
 
+    def _notify_status_change(self, task, step_id: int, status: str, message: str = "") -> None:
+        """通知流水线状态变化"""
+        try:
+            if hasattr(task, "pipeline_ref") and task.pipeline_ref:
+                task.pipeline_ref.notify_step_status(
+                    task.task_id, step_id, status, message
+                )
+                self.logger.debug(
+                    f"已通知状态变化: 任务 {task.task_id}, 步骤 {step_id}, 状态 {status}"
+                )
+        except Exception as e:
+            self.logger.debug(
+                f"通知状态变化失败: {e}"
+            )  # 使用debug级别，避免干扰主要日志
+
     def on_task_failed(self, event: TaskEvent) -> None:
         """任务失败时的处理"""
         if not event.task:

@@ -7,6 +7,7 @@
 import logging
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .task import ProcessResult, StepProgressDetail, StepStatus, Task, TaskStatus
@@ -144,8 +145,6 @@ class StepProcessor(ABC):
 
             # 保存缓存（如果任务有路径信息）
             if task.paths and "pipeline_cache" in task.paths:
-                from pathlib import Path
-
                 cache_path = Path(task.paths["pipeline_cache"])
                 if task.save_to_cache(cache_path):
                     self.logger.debug(f"任务 {task.task_id} 缓存已更新")
