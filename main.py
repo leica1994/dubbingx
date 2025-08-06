@@ -864,14 +864,6 @@ class DubbingGUI(QMainWindow):
 
         # 默认从缓存恢复处理（移除用户选择）
 
-        # 批量处理模式选项 - 默认并行处理
-        batch_mode_layout = QHBoxLayout()
-
-        batch_mode_layout.addWidget(QLabel("默认并行批量处理"))
-
-        batch_mode_layout.addStretch()
-        options_layout.addLayout(batch_mode_layout)
-
         # 并行处理选项已移除 - 使用系统预设的每步骤线程池配置
 
         # Index-TTS API配置
