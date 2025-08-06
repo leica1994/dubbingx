@@ -1453,6 +1453,12 @@ class DubbingGUI(QMainWindow):
                 step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)
                 self.status_table.setItem(task_row, step_col, step_item)
 
+            # 检查状态序列一致性（防止逻辑错误）
+            if not self._validate_step_sequence_consistency(task_row, step_id, status):
+                self.logger.warning(f"状态序列不一致，修复任务行{task_row}的状态")
+                self._fix_task_status_sequence(task_row)
+                return
+
             # 检查状态是否需要更新
             current_icon = step_item.text()
             new_icon, color, tooltip = self._get_status_display(step_id, status, message)
@@ -1485,6 +1491,182 @@ class DubbingGUI(QMainWindow):
 
         except Exception as e:
             self.logger.error(f"更新任务行状态失败: {e}")
+
+    def _validate_step_sequence_consistency(self, task_row: int, step_id: int, new_status: str) -> bool:
+        """验证步骤序列一致性"""
+        try:
+            # 获取当前任务的所有步骤状态
+            step_statuses = []
+            for i in range(8):
+                step_col = 1 + i
+                step_item = self.status_table.item(task_row, step_col)
+                if step_item:
+                    icon = step_item.text()
+                    if icon == "✅":
+                        step_statuses.append("completed")
+                    elif icon == "🔄":
+                        step_statuses.append("processing")
+                    elif icon == "❌":
+                        step_statuses.append("failed")
+                    else:
+                        step_statuses.append("pending")
+                else:
+                    step_statuses.append("pending")
+            
+            # 模拟应用新状态后的情况
+            test_statuses = step_statuses.copy()
+            test_statuses[step_id] = new_status
+            
+            # 验证规则：
+            # 1. 如果某个步骤是completed，前面的步骤都应该是completed
+            # 2. 如果某个步骤是processing，前面的步骤都应该是completed
+            # 3. 不应该出现completed步骤后面有processing的情况
+            
+            for i in range(8):
+                current_status = test_statuses[i]
+                
+                if current_status == "completed":
+                    # 检查前面的步骤是否都已完成
+                    for j in range(i):
+                        if test_statuses[j] not in ["completed", "failed"]:
+                            self.logger.debug(f"不一致：步骤{i}完成但步骤{j}未完成")
+                            return False
+                
+                elif current_status == "processing":
+                    # 检查前面的步骤是否都已完成
+                    for j in range(i):
+                        if test_statuses[j] != "completed":
+                            self.logger.debug(f"不一致：步骤{i}处理中但步骤{j}未完成")
+                            return False
+                    
+                    # 检查后面是否有已完成的步骤
+                    for j in range(i + 1, 8):
+                        if test_statuses[j] == "completed":
+                            self.logger.debug(f"不一致：步骤{i}处理中但步骤{j}已完成")
+                            return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"验证步骤序列一致性失败: {e}")
+            return True  # 验证失败时允许更新
+    
+    def _fix_task_status_sequence(self, task_row: int):
+        """修复任务状态序列，确保逻辑一致性"""
+        try:
+            # 获取当前所有步骤状态
+            step_statuses = []
+            for i in range(8):
+                step_col = 1 + i
+                step_item = self.status_table.item(task_row, step_col)
+                if step_item:
+                    icon = step_item.text()
+                    if icon == "✅":
+                        step_statuses.append("completed")
+                    elif icon == "🔄":
+                        step_statuses.append("processing")
+                    elif icon == "❌":
+                        step_statuses.append("failed")
+                    else:
+                        step_statuses.append("pending")
+                else:
+                    step_statuses.append("pending")
+            
+            self.logger.debug(f"修复前状态序列: {step_statuses}")
+            
+            # 应用修复逻辑
+            fixed_statuses = self._apply_sequence_fix_logic(step_statuses)
+            
+            self.logger.debug(f"修复后状态序列: {fixed_statuses}")
+            
+            # 更新表格显示
+            for i in range(8):
+                if step_statuses[i] != fixed_statuses[i]:
+                    step_col = 1 + i
+                    step_item = self.status_table.item(task_row, step_col)
+                    
+                    if not step_item:
+                        step_item = QTableWidgetItem()
+                        step_item.setFlags(step_item.flags() & ~Qt.ItemIsEditable)
+                        self.status_table.setItem(task_row, step_col, step_item)
+                    
+                    new_icon, color, tooltip = self._get_status_display(i, fixed_statuses[i])
+                    step_item.setText(new_icon)
+                    step_item.setForeground(color)
+                    step_item.setToolTip(tooltip)
+                    step_item.setTextAlignment(Qt.AlignCenter)
+            
+            # 更新整体状态
+            self.update_overall_task_status(task_row)
+            
+            # 强制刷新表格
+            self.status_table.viewport().update()
+            
+        except Exception as e:
+            self.logger.error(f"修复任务状态序列失败: {e}")
+    
+    def _apply_sequence_fix_logic(self, step_statuses: List[str]) -> List[str]:
+        """应用状态序列修复逻辑"""
+        fixed_statuses = step_statuses.copy()
+        
+        # 找到最后一个完成的步骤
+        last_completed = -1
+        for i in range(8):
+            if fixed_statuses[i] == "completed":
+                last_completed = i
+        
+        # 找到第一个失败的步骤
+        first_failed = -1
+        for i in range(8):
+            if fixed_statuses[i] == "failed":
+                first_failed = i
+                break
+        
+        # 修复逻辑：
+        # 1. 如果有失败步骤，失败步骤之后的所有步骤应该是pending
+        # 2. 最后完成步骤之后的第一个步骤可以是processing，其余应该是pending
+        # 3. 最后完成步骤之前的步骤如果不是completed或failed，应该设为completed
+        
+        if first_failed != -1:
+            # 有失败步骤的情况
+            for i in range(first_failed + 1, 8):
+                if fixed_statuses[i] in ["completed", "processing"]:
+                    fixed_statuses[i] = "pending"
+        else:
+            # 无失败步骤的情况
+            if last_completed >= 0:
+                # 确保最后完成步骤之前的所有步骤都是completed
+                for i in range(last_completed):
+                    if fixed_statuses[i] == "processing":
+                        fixed_statuses[i] = "completed"
+                
+                # 最后完成步骤之后最多只能有一个processing步骤
+                processing_found = False
+                for i in range(last_completed + 1, 8):
+                    if fixed_statuses[i] == "completed":
+                        # 已完成的步骤后面有更多已完成步骤，这是允许的
+                        last_completed = i
+                        processing_found = False
+                    elif fixed_statuses[i] == "processing":
+                        if processing_found:
+                            # 已经有一个processing步骤，后续应该是pending
+                            fixed_statuses[i] = "pending"
+                        else:
+                            processing_found = True
+                    elif processing_found and fixed_statuses[i] == "pending":
+                        # processing步骤后面应该都是pending，这是正确的
+                        pass
+            
+            # 特殊情况：如果有completed步骤但中间有processing步骤，修复为合理状态
+            for i in range(1, 8):
+                if fixed_statuses[i] == "completed":
+                    # 如果当前步骤完成，检查前面是否有processing步骤
+                    for j in range(i):
+                        if fixed_statuses[j] == "processing":
+                            # 前面的processing步骤应该改为completed
+                            fixed_statuses[j] = "completed"
+        
+        return fixed_statuses
 
     def update_task_step_status(
         self, task_name: str, step_id: int, status: str, message: str = "", force_update: bool = False
@@ -1913,6 +2095,10 @@ class DubbingGUI(QMainWindow):
                         step_item.flags() & ~Qt.ItemIsEditable
                     )  # 设置为不可编辑
                     self.status_table.setItem(i, 1 + step_idx, step_item)
+
+                # 验证和修复状态序列一致性
+                if cached_status:
+                    self._fix_task_status_sequence(i)
 
                 # 更新整体状态
                 self.update_overall_task_status(i)

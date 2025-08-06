@@ -43,7 +43,7 @@ class StatusEventManager(QObject):
         # 后台同步定时器
         self._sync_timer = QTimer(self)
         self._sync_timer.timeout.connect(self._sync_to_unified_cache)
-        self._sync_timer_interval = 2000  # 2秒同步间隔
+        self._sync_timer_interval = 500  # 500ms同步间隔（更频繁）
         
         # 状态监控定时器
         self._monitor_timer = QTimer(self)
@@ -202,6 +202,10 @@ class StatusEventManager(QObject):
             if not success:
                 return
             
+            # 对于关键状态变化，立即同步到统一缓存
+            if self._should_immediate_sync(event):
+                self._immediate_sync_task(event.task_id)
+            
             # 队列信号发送（异步）
             self._signal_emitter.queue_status_event(event)
             
@@ -211,6 +215,52 @@ class StatusEventManager(QObject):
             import traceback
             traceback.print_exc()
             self.logger.error(f"处理状态事件失败: {e}")
+
+    def _should_immediate_sync(self, event: StatusEvent) -> bool:
+        """判断是否需要立即同步到缓存"""
+        # 步骤完成或失败时需要立即同步
+        critical_events = [
+            StatusEventType.STEP_COMPLETED,
+            StatusEventType.STEP_FAILED,
+            StatusEventType.TASK_COMPLETED,
+            StatusEventType.TASK_FAILED
+        ]
+        return event.event_type in critical_events
+
+    def _immediate_sync_task(self, task_id: str) -> None:
+        """立即同步特定任务到统一缓存"""
+        try:
+            with self._lock:
+                if task_id not in self._cache_managers:
+                    return
+                    
+                cache_manager = self._cache_managers[task_id]
+                
+                # 获取任务的所有步骤状态
+                steps = self._status_cache.get_task_steps(task_id)
+                
+                for step_id, step_info in steps.items():
+                    # 立即同步步骤状态到统一缓存
+                    status = step_info.get("status", "pending")
+                    progress = step_info.get("progress", 0.0)
+                    current_item = step_info.get("current_item", 0)
+                    total_items = step_info.get("total_items", 1)
+                    error_message = step_info.get("error_message")
+                    
+                    cache_manager.update_step_status(
+                        step_id=step_id,
+                        status=status,
+                        progress_percent=progress,
+                        current_item=current_item,
+                        total_items=total_items,
+                        error_message=error_message,
+                        metadata=step_info.get("metadata", {})
+                    )
+                
+                self.logger.debug(f"立即同步任务 {task_id} 到统一缓存")
+                    
+        except Exception as e:
+            self.logger.error(f"立即同步任务 {task_id} 失败: {e}")
 
     def _on_cache_status_changed(self, event: StatusEvent) -> None:
         """状态缓存变更回调"""
