@@ -52,7 +52,7 @@ class TaskScheduler:
         # 工作线程数配置（每个步骤独立配置）
         self.max_workers_per_step = max_workers_per_step or {
             0: 8,  # preprocess_subtitle - CPU密集型，多线程处理
-            1: 2,  # separate_media - GPU任务
+            1: 1,  # separate_media - GPU任务，避免并发竞争
             2: 2,  # generate_reference_audio - GPU任务
             3: 4,  # generate_tts - 外部服务调用，CPU任务
             4: 2,  # align_audio - GPU任务

@@ -334,12 +334,14 @@ class StreamlinePipeline(QObject):
         self,
         video_subtitle_pairs: List[Tuple[str, Optional[str]]],
         resume_from_cache: bool = True,
+        enable_vocal_separation: bool = False,
     ) -> Dict[str, Any]:
         """使用流水线模式批量处理视频"""
         start_time = time.time()
         self.logger.info(f"开始流水线批量处理 {len(video_subtitle_pairs)} 个视频")
+        self.logger.info(f"音频分离模式: {'完整分离' if enable_vocal_separation else '快速模式'}")
 
-        tasks = self._create_tasks(video_subtitle_pairs, resume_from_cache)
+        tasks = self._create_tasks(video_subtitle_pairs, resume_from_cache, enable_vocal_separation)
 
         try:
             results = self._execute_pipeline(tasks)
@@ -352,6 +354,7 @@ class StreamlinePipeline(QObject):
         self,
         video_subtitle_pairs: List[Tuple[str, Optional[str]]],
         resume_from_cache: bool,
+        enable_vocal_separation: bool,
     ):
         """创建任务列表"""
         tasks = []
@@ -363,6 +366,12 @@ class StreamlinePipeline(QObject):
                 task_id, video_path, subtitle_path, paths, resume_from_cache
             )
             self._setup_task_paths(task, paths)
+            
+            # 设置音频分离模式
+            if not hasattr(task, 'options'):
+                task.options = {}
+            task.options['enable_vocal_separation'] = enable_vocal_separation
+            
             tasks.append(task)
 
         return tasks

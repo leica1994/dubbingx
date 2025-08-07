@@ -37,7 +37,7 @@ class MediaProcessorCore:
             self.logger.info("使用CPU处理")
 
     def separate_media(
-        self, video_path: str, output_dir: Optional[str] = None
+        self, video_path: str, output_dir: Optional[str] = None, enable_vocal_separation: bool = False
     ) -> Dict[str, Any]:
         """
         根据视频路径分离人声、无声视频和背景音乐
@@ -45,6 +45,7 @@ class MediaProcessorCore:
         Args:
             video_path: 视频文件路径
             output_dir: 输出目录，默认为视频文件所在目录
+            enable_vocal_separation: 是否启用人声分离，False时只分离音视频
 
         Returns:
             包含分离结果的字典
@@ -81,12 +82,21 @@ class MediaProcessorCore:
             # 2. 创建无声视频
             self._create_silent_video(video_path, str(silent_video_path))
 
-            # 3. 分离音频（人声和背景音乐）
-            self._separate_audio(
-                str(raw_audio_path),
-                str(vocal_audio_path),
-                str(background_audio_path),
-            )
+            # 3. 根据选项决定是否分离音频（人声和背景音乐）
+            if enable_vocal_separation:
+                self.logger.info("使用Demucs进行完整音频分离（人声/背景音乐）")
+                self._separate_audio(
+                    str(raw_audio_path),
+                    str(vocal_audio_path),
+                    str(background_audio_path),
+                )
+            else:
+                self.logger.info("快速模式：直接使用原始音频作为人声，跳过Demucs分离和背景音乐处理")
+                # 直接复制原始音频作为人声
+                import shutil
+                shutil.copy2(str(raw_audio_path), str(vocal_audio_path))
+                
+                # 快速模式下不创建背景音乐文件
 
             # 4. 清理临时文件
             if raw_audio_path.exists():
@@ -98,12 +108,14 @@ class MediaProcessorCore:
                 "success": True,
                 "silent_video_path": str(silent_video_path),
                 "vocal_audio_path": str(vocal_audio_path),
-                "background_audio_path": str(background_audio_path),
+                "background_audio_path": str(background_audio_path) if enable_vocal_separation else "",
                 "separation_info": {
                     "video_name": video_name,
                     "video_format": video_ext,
                     "output_directory": str(output_dir),
                     "gpu_acceleration": self.use_gpu,
+                    "vocal_separation_enabled": enable_vocal_separation,
+                    "separation_mode": "完整分离" if enable_vocal_separation else "快速模式",
                 },
             }
 
@@ -415,7 +427,7 @@ class MediaProcessorCore:
             # 加载模型
             if self.model is None:
                 self.logger.info("加载Demucs模型...")
-                self.model = pretrained.get_model("htdemucs")
+                self.model = pretrained.get_model("mdx_extra_q")
                 if self.use_gpu:
                     self.model = self.model.cuda()
                 self.model.eval()
@@ -446,6 +458,11 @@ class MediaProcessorCore:
             # 保存分离的音频
             sf.write(vocal_path, vocals.T.numpy(), model_sample_rate)
             sf.write(background_path, background.T.numpy(), model_sample_rate)
+            
+            # 立即释放大型张量内存
+            del sources, vocals, background, waveform
+            if self.use_gpu:
+                torch.cuda.empty_cache()
 
             self.logger.debug(
                 f"音频分离完成: 人声={vocal_path}, 背景={background_path}"
@@ -933,10 +950,10 @@ def get_media_processor_core() -> MediaProcessorCore:
 
 
 def separate_media_core(
-    video_path: str, output_dir: Optional[str] = None
+    video_path: str, output_dir: Optional[str] = None, enable_vocal_separation: bool = False
 ) -> Dict[str, Any]:
     """便捷函数：分离视频中的人声、无声视频和背景音乐"""
-    return get_media_processor_core().separate_media(video_path, output_dir)
+    return get_media_processor_core().separate_media(video_path, output_dir, enable_vocal_separation)
 
 
 def generate_reference_audio_core(

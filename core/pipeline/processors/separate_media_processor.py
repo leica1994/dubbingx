@@ -50,11 +50,14 @@ class SeparateMediaProcessor(StepProcessor):
             media_separation_dir = output_dir / "media_separation"
             media_separation_dir.mkdir(exist_ok=True)
 
-            self.logger.info(f"开始媒体分离: {task.video_path}")
+            # 获取音频分离模式选项
+            enable_vocal_separation = getattr(task, 'options', {}).get('enable_vocal_separation', False)
+            
+            self.logger.info(f"开始媒体分离: {task.video_path} (模式: {'完整分离' if enable_vocal_separation else '快速模式'})")
 
             # 调用媒体分离功能
             result = separate_media_core(
-                str(task.video_path), str(media_separation_dir)
+                str(task.video_path), str(media_separation_dir), enable_vocal_separation
             )
 
             if not result.get("success", False):

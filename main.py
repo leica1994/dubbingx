@@ -104,10 +104,11 @@ class GUIStreamlinePipeline(StreamlinePipeline):
         self,
         video_subtitle_pairs: List[Tuple[str, Optional[str]]],
         resume_from_cache: bool = True,
+        enable_vocal_separation: bool = False,
     ) -> Dict[str, Any]:
         """使用流水线模式批量处理视频（带GUI日志支持）"""
         self._ensure_logging_setup()
-        return super().process_batch_streamline(video_subtitle_pairs, resume_from_cache)
+        return super().process_batch_streamline(video_subtitle_pairs, resume_from_cache, enable_vocal_separation)
 
     def _ensure_logging_setup(self):
         """确保日志处理器已设置"""
@@ -219,10 +220,12 @@ class StreamlineBatchDubbingWorkerThread(QThread):
         self,
         video_subtitle_pairs: List[Tuple[str, str]],
         resume_from_cache: bool = True,
+        enable_vocal_separation: bool = False,
     ):
         super().__init__()
         self.pairs = video_subtitle_pairs
         self.resume_from_cache = resume_from_cache
+        self.enable_vocal_separation = enable_vocal_separation
         self.is_cancelled = False
 
         # 创建流水线管道
@@ -243,7 +246,7 @@ class StreamlineBatchDubbingWorkerThread(QThread):
 
             # 执行流水线批量处理
             result = self.pipeline.process_batch_streamline(
-                self.pairs, self.resume_from_cache
+                self.pairs, self.resume_from_cache, self.enable_vocal_separation
             )
 
             # 发送完成信号
@@ -858,6 +861,27 @@ class DubbingGUI(QMainWindow):
         # 默认从缓存恢复处理（移除用户选择）
 
         # 并行处理选项已移除 - 使用系统预设的每步骤线程池配置
+
+        # 音频分离模式选项
+        separation_layout = QVBoxLayout()
+        separation_label = QLabel("音频分离模式:")
+        separation_layout.addWidget(separation_label)
+        
+        separation_radio_layout = QHBoxLayout()
+        self.full_separation_radio = QRadioButton("完整分离 (人声/背景分离)")
+        self.fast_separation_radio = QRadioButton("快速模式 (仅音视频分离)")
+        self.fast_separation_radio.setChecked(True)  # 默认选择快速模式
+        
+        self.separation_button_group = QButtonGroup()
+        self.separation_button_group.addButton(self.full_separation_radio, 0)
+        self.separation_button_group.addButton(self.fast_separation_radio, 1)
+        
+        separation_radio_layout.addWidget(self.full_separation_radio)
+        separation_radio_layout.addWidget(self.fast_separation_radio)
+        separation_radio_layout.addStretch()
+        
+        separation_layout.addLayout(separation_radio_layout)
+        options_layout.addLayout(separation_layout)
 
         # Index-TTS API配置
         api_options_layout = QHBoxLayout()
@@ -2466,9 +2490,12 @@ class DubbingGUI(QMainWindow):
         self.cancel_btn.setEnabled(True)
 
         try:
+            # 获取音频分离模式设置
+            enable_vocal_separation = self.full_separation_radio.isChecked()
+            
             # 创建统一的批量处理工作线程
             self.worker_thread = StreamlineBatchDubbingWorkerThread(
-                video_subtitle_pairs, True  # 默认从缓存恢复
+                video_subtitle_pairs, True, enable_vocal_separation  # 默认从缓存恢复，传递音频分离模式
             )
 
             # 连接信号 - 统一使用批量处理的信号处理

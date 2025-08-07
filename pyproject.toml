@@ -10,7 +10,7 @@ license = { text = "MIT" }
 dependencies = [
     # PyTorch生态系统
     "torch",
-    "torchaudio", 
+    "torchaudio",
     "torchvision",
     # AI模型
     "demucs",
@@ -27,7 +27,8 @@ dependencies = [
     # 文本处理
     "unicodedata2",
     # HTTP客户端
-    "httpx"
+    "httpx",
+    "diffq>=0.2.4",
 ]
 
 [build-system]
