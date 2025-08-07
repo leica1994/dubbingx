@@ -621,27 +621,6 @@ class DubbingGUI(QMainWindow):
 
         control_layout.addLayout(button_layout)
 
-        # 缓存控制按钮
-        cache_layout = QHBoxLayout()
-
-        self.cache_info_btn = QPushButton("缓存信息")
-        self.cache_info_btn.clicked.connect(self.show_cache_info)
-        cache_layout.addWidget(self.cache_info_btn)
-
-        self.clear_cache_btn = QPushButton("清理缓存")
-        self.clear_cache_btn.clicked.connect(self.clear_cache)
-        cache_layout.addWidget(self.clear_cache_btn)
-
-        self.clear_outputs_btn = QPushButton("清理输出目录")
-        self.clear_outputs_btn.clicked.connect(self.clear_output_directories)
-        cache_layout.addWidget(self.clear_outputs_btn)
-
-        self.repair_cache_btn = QPushButton("修复缓存")
-        self.repair_cache_btn.clicked.connect(self.repair_cache)
-        cache_layout.addWidget(self.repair_cache_btn)
-
-        control_layout.addLayout(cache_layout)
-
         layout.addWidget(control_group)
 
         # 处理选项组
@@ -1924,107 +1903,6 @@ class DubbingGUI(QMainWindow):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
 
-    def show_cache_info(self):
-        """显示缓存信息"""
-        QMessageBox.information(self, "信息", "请通过日志输出查看缓存相关信息")
-
-    def clear_cache(self):
-        """清理缓存"""
-        QMessageBox.information(
-            self, "信息", "请手动删除相应的缓存文件，或重新处理文件"
-        )
-
-    def repair_cache(self):
-        """修复缓存"""
-        QMessageBox.information(self, "信息", "请通过重新处理文件来修复缓存")
-
-    def clear_output_directories(self):
-        """清理重复的输出目录"""
-        reply = QMessageBox.question(
-            self,
-            "确认清理",
-            "确定要清理重复的输出目录吗？\n\n此操作将：\n• 分析现有输出目录\n• 识别并删除重复目录\n• 保留最新的处理结果\n\n建议先备份重要数据！",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-
-        if reply == QMessageBox.Yes:
-            try:
-                import shutil
-
-                # 查找可能的outputs目录
-                current_dir = Path.cwd()
-                outputs_dirs = []
-
-                # 在当前目录和父目录中查找outputs目录
-                for search_dir in [current_dir, current_dir.parent]:
-                    potential_outputs = search_dir / "outputs"
-                    if potential_outputs.exists() and potential_outputs.is_dir():
-                        outputs_dirs.append(potential_outputs)
-
-                if not outputs_dirs:
-                    QMessageBox.information(self, "信息", "未找到输出目录")
-                    return
-
-                # 分析和清理每个outputs目录
-                total_cleaned = 0
-                cleanup_log = []
-
-                for outputs_dir in outputs_dirs:
-                    # 获取所有子目录
-                    subdirs = [d for d in outputs_dir.iterdir() if d.is_dir()]
-
-                    if not subdirs:
-                        continue
-
-                    # 按照统一的文件名清理逻辑分组
-                    def _sanitize_filename(filename: str) -> str:
-                        sanitized = re.sub(r'[<>:"/\\\\|?*]', "_", filename)
-                        sanitized = re.sub(r"[@#&%=+]", "_", sanitized)
-                        sanitized = re.sub(r"[.\\-\\s]", "_", sanitized)
-                        sanitized = re.sub(r"_+", "_", sanitized)
-                        sanitized = sanitized.strip("_")
-                        if not sanitized:
-                            sanitized = "unnamed"
-                        return sanitized
-
-                    # 将目录按照清理后的名称分组
-                    grouped_dirs = {}
-                    for subdir in subdirs:
-                        clean_name = _sanitize_filename(subdir.name)
-                        if clean_name not in grouped_dirs:
-                            grouped_dirs[clean_name] = []
-                        grouped_dirs[clean_name].append(subdir)
-
-                    # 清理重复目录
-                    for clean_name, dirs in grouped_dirs.items():
-                        if len(dirs) > 1:
-                            # 按修改时间排序，保留最新的
-                            dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
-                            keep_dir = dirs[0]
-
-                            for remove_dir in dirs[1:]:
-                                try:
-                                    shutil.rmtree(remove_dir)
-                                    cleanup_log.append(f"删除: {remove_dir.name}")
-                                    total_cleaned += 1
-                                except Exception as e:
-                                    cleanup_log.append(
-                                        f"删除失败 {remove_dir.name}: {e}"
-                                    )
-
-                            cleanup_log.append(f"保留: {keep_dir.name} (最新)")
-
-                # 显示清理结果
-                if total_cleaned > 0:
-                    result_msg = f"清理完成！删除了 {total_cleaned} 个重复目录。\n\n详细信息:\n" + "\n".join(
-                        cleanup_log[-10:]
-                    )  # 只显示最后10条
-                    QMessageBox.information(self, "清理完成", result_msg)
-                else:
-                    QMessageBox.information(self, "清理完成", "未发现重复的输出目录")
-
-            except Exception as e:
-                QMessageBox.critical(self, "错误", f"清理输出目录失败: {str(e)}")
 
     def _initialize_tts_processor(self, api_url: str):
         """初始化TTS处理器"""
