@@ -20,11 +20,15 @@ class StreamlineBatchDubbingWorkerThread(QThread):
         video_subtitle_pairs: List[Tuple[str, str]],
         resume_from_cache: bool = True,
         enable_vocal_separation: bool = False,
+        audio_quality_level: int = 0,  # 0=最高质量, 1=高质量, 2=标准质量
+        video_quality_level: int = 0,  # 0=无损画质, 1=超高画质, 2=平衡质量, 3=高效压缩
     ):
         super().__init__()
         self.pairs = video_subtitle_pairs
         self.resume_from_cache = resume_from_cache
         self.enable_vocal_separation = enable_vocal_separation
+        self.audio_quality_level = audio_quality_level
+        self.video_quality_level = video_quality_level
         self.is_cancelled = False
 
         # 创建流水线管道
@@ -45,7 +49,11 @@ class StreamlineBatchDubbingWorkerThread(QThread):
 
             # 执行流水线批量处理
             result = self.pipeline.process_batch_streamline(
-                self.pairs, self.resume_from_cache, self.enable_vocal_separation
+                self.pairs,
+                self.resume_from_cache,
+                self.enable_vocal_separation,
+                self.audio_quality_level,
+                self.video_quality_level,
             )
 
             # 发送完成信号

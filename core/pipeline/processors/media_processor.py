@@ -28,18 +28,23 @@ class MediaProcessorCore:
         self.logger = logging.getLogger(__name__)
         self.model = None
         self.use_gpu = torch.cuda.is_available()
-        
+
         # 内存缓存系统 - 充分利用48GB内存
         import psutil
+
         available_memory_gb = psutil.virtual_memory().available / (1024**3)
-        
+
         # 根据可用内存动态设置缓存大小
         if available_memory_gb > 32:
             # 48GB+ 内存配置 - 使用更大的缓存
-            self.cache_size_limit = min(8, int(available_memory_gb * 0.15))  # 使用15%内存作为缓存
+            self.cache_size_limit = min(
+                8, int(available_memory_gb * 0.15)
+            )  # 使用15%内存作为缓存
             self.audio_cache_max_size = 20  # 缓存更多音频文件
             self.enable_aggressive_caching = True
-            self.logger.info(f"检测到大内存({available_memory_gb:.1f}GB)，启用增强缓存模式")
+            self.logger.info(
+                f"检测到大内存({available_memory_gb:.1f}GB)，启用增强缓存模式"
+            )
         elif available_memory_gb > 16:
             # 16-32GB 内存配置
             self.cache_size_limit = 4
@@ -50,13 +55,13 @@ class MediaProcessorCore:
             self.cache_size_limit = 1
             self.audio_cache_max_size = 3
             self.enable_aggressive_caching = False
-            
+
         # 缓存存储
         self._audio_cache = {}  # 音频文件缓存
         self._model_cache = {}  # 模型缓存
         self._result_cache = {}  # 计算结果缓存
-        self._cache_usage = 0   # 当前缓存使用量(GB)
-        
+        self._cache_usage = 0  # 当前缓存使用量(GB)
+
         # 打印GPU状态
         if self.use_gpu:
             gpu_name = torch.cuda.get_device_name(0)
@@ -66,7 +71,12 @@ class MediaProcessorCore:
             self.logger.info("使用CPU处理")
 
     def separate_media(
-        self, video_path: str, output_dir: Optional[str] = None, enable_vocal_separation: bool = False
+        self,
+        video_path: str,
+        output_dir: Optional[str] = None,
+        enable_vocal_separation: bool = False,
+        audio_quality_level: int = 0,
+        video_quality_level: int = 0,
     ) -> Dict[str, Any]:
         """
         根据视频路径分离人声、无声视频和背景音乐
@@ -75,6 +85,8 @@ class MediaProcessorCore:
             video_path: 视频文件路径
             output_dir: 输出目录，默认为视频文件所在目录
             enable_vocal_separation: 是否启用人声分离，False时只分离音视频
+            audio_quality_level: 音频质量级别 (0=最高质量, 1=高质量, 2=标准质量)
+            video_quality_level: 视频质量级别 (0=最高质量, 1=高质量压缩, 2=极速压缩)
 
         Returns:
             包含分离结果的字典
@@ -106,10 +118,10 @@ class MediaProcessorCore:
             self.logger.info(f"开始处理视频: {video_path}")
 
             # 1. 提取原始音频
-            self._extract_audio(video_path, str(raw_audio_path))
+            self._extract_audio(video_path, str(raw_audio_path), audio_quality_level)
 
             # 2. 创建无声视频
-            self._create_silent_video(video_path, str(silent_video_path))
+            self._create_silent_video(video_path, str(silent_video_path), video_quality_level)
 
             # 3. 根据选项决定是否分离音频（人声和背景音乐）
             if enable_vocal_separation:
@@ -120,11 +132,14 @@ class MediaProcessorCore:
                     str(background_audio_path),
                 )
             else:
-                self.logger.info("快速模式：直接使用原始音频作为人声，跳过Demucs分离和背景音乐处理")
+                self.logger.info(
+                    "快速模式：直接使用原始音频作为人声，跳过Demucs分离和背景音乐处理"
+                )
                 # 直接复制原始音频作为人声
                 import shutil
+
                 shutil.copy2(str(raw_audio_path), str(vocal_audio_path))
-                
+
                 # 快速模式下不创建背景音乐文件
 
             # 4. 清理临时文件
@@ -137,14 +152,18 @@ class MediaProcessorCore:
                 "success": True,
                 "silent_video_path": str(silent_video_path),
                 "vocal_audio_path": str(vocal_audio_path),
-                "background_audio_path": str(background_audio_path) if enable_vocal_separation else "",
+                "background_audio_path": (
+                    str(background_audio_path) if enable_vocal_separation else ""
+                ),
                 "separation_info": {
                     "video_name": video_name,
                     "video_format": video_ext,
                     "output_directory": str(output_dir),
                     "gpu_acceleration": self.use_gpu,
                     "vocal_separation_enabled": enable_vocal_separation,
-                    "separation_mode": "完整分离" if enable_vocal_separation else "快速模式",
+                    "separation_mode": (
+                        "完整分离" if enable_vocal_separation else "快速模式"
+                    ),
                 },
             }
 
@@ -413,19 +432,119 @@ class MediaProcessorCore:
             self.logger.error(f"音视频合并失败: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def _extract_audio(self, video_path: str, audio_path: str):
-        """从视频中提取音频，使用GPU硬件加速"""
+    def _log_ffmpeg_command(self, input_paths, output_path: str, input_args_list=None, output_args: dict = None, description: str = ""):
+        """记录FFmpeg命令到日志
+        
+        Args:
+            input_paths: 输入文件路径，可以是单个字符串或路径列表
+            output_path: 输出文件路径
+            input_args_list: 输入参数，可以是单个字典或字典列表，与input_paths对应
+            output_args: 输出参数字典
+            description: 命令描述
+        """
+        try:
+            # 构建FFmpeg命令字符串用于日志显示
+            cmd_parts = ["ffmpeg"]
+            
+            # 处理输入文件和参数
+            if isinstance(input_paths, str):
+                input_paths = [input_paths]
+            if input_args_list is None:
+                input_args_list = [{}]
+            elif isinstance(input_args_list, dict):
+                input_args_list = [input_args_list]
+            
+            # 确保输入参数列表长度与输入路径匹配
+            while len(input_args_list) < len(input_paths):
+                input_args_list.append({})
+            
+            # 添加每个输入文件及其参数
+            for i, (input_path, input_args) in enumerate(zip(input_paths, input_args_list)):
+                # 添加输入参数
+                for key, value in input_args.items():
+                    if key == "hwaccel":
+                        cmd_parts.append(f"-hwaccel {value}")
+                    elif key == "hwaccel_output_format":
+                        cmd_parts.append(f"-hwaccel_output_format {value}")
+                    else:
+                        cmd_parts.append(f"-{key} {value}")
+                
+                # 添加输入文件
+                cmd_parts.append(f'-i "{input_path}"')
+            
+            # 添加输出参数
+            if output_args:
+                for key, value in output_args.items():
+                    if key == "an" and value is None:
+                        cmd_parts.append("-an")
+                    elif key in ["acodec", "vcodec"]:
+                        cmd_parts.append(f"-{key} {value}")
+                    elif key == "c:v":
+                        cmd_parts.append(f"-c:v {value}")
+                    elif key == "c:a":
+                        cmd_parts.append(f"-c:a {value}")
+                    elif key in ["b:a", "ar", "ac", "crf", "audio_bitrate", "maxrate", "bufsize"]:
+                        cmd_parts.append(f"-{key} {value}")
+                    elif key == "preset":
+                        cmd_parts.append(f"-preset {value}")
+                    elif key == "tune":
+                        cmd_parts.append(f"-tune {value}")
+                    elif key == "movflags":
+                        cmd_parts.append(f"-movflags {value}")
+                    elif key == "t":
+                        cmd_parts.append(f"-t {value}")
+                    else:
+                        cmd_parts.append(f"-{key} {value}")
+            
+            # 添加输出文件
+            cmd_parts.append(f'"{output_path}"')
+            
+            # 输出完整命令到日志
+            full_command = " ".join(cmd_parts)
+            desc_text = f" ({description})" if description else ""
+            self.logger.info(f"执行FFmpeg命令{desc_text}: {full_command}")
+            
+        except Exception as e:
+            self.logger.debug(f"FFmpeg命令日志记录失败: {e}")
+
+    def _extract_audio(self, video_path: str, audio_path: str, audio_quality_level: int = 0):
+        """从视频中提取音频，使用GPU硬件加速
+
+        Args:
+            video_path: 输入视频路径
+            audio_path: 输出音频路径
+            audio_quality_level: 音频质量级别 (0=最高质量, 1=高质量, 2=标准质量)
+        """
         try:
             # RTX 4060Ti GPU加速配置
             input_args = {}
-            output_args = {"acodec": "pcm_s16le", "ar": 44100, "ac": 2}
-            
+
+            # 根据质量级别设置音频输出参数
+            if audio_quality_level == 0:  # 最高质量 (PCM无损)
+                output_args = {"acodec": "pcm_s16le", "ar": 44100, "ac": 2}
+                quality_desc = "最高质量(PCM无损)"
+            elif audio_quality_level == 1:  # 高质量音频 (MP3 192kbps)
+                output_args = {"acodec": "libmp3lame", "b:a": "192k", "ar": 44100, "ac": 2}
+                quality_desc = "高质量音频(MP3 192kbps)"
+            elif audio_quality_level == 2:  # 高效压缩 (AAC 128kbps)
+                output_args = {"acodec": "aac", "b:a": "128k", "ar": 32000, "ac": 2}
+                quality_desc = "高效压缩(AAC 128kbps)"
+            else:
+                # 默认回退到最高质量
+                output_args = {"acodec": "pcm_s16le", "ar": 44100, "ac": 2}
+                quality_desc = "最高质量(默认)"
+
+            self.logger.info(f"提取音频使用{quality_desc}")
+
             # 启用GPU硬件解码加速
             if self.use_gpu:
                 input_args["hwaccel"] = "cuda"
                 input_args["hwaccel_output_format"] = "cuda"
                 self.logger.debug("使用CUDA硬件加速解码")
-            
+
+            # 记录FFmpeg命令到日志
+            self._log_ffmpeg_command(video_path, audio_path, input_args, output_args, f"音频提取-{quality_desc}")
+
             (
                 ffmpeg.input(video_path, **input_args)
                 .output(audio_path, **output_args)
@@ -434,57 +553,127 @@ class MediaProcessorCore:
             )
             self.logger.debug(f"音频提取完成: {audio_path}")
         except Exception as e:
-            # 如果GPU加速失败，回退到CPU处理
+            # 首先检查是否是MP3编码器问题，如果是则回退到AAC
+            if audio_quality_level == 1 and "libmp3lame" in str(e).lower():
+                try:
+                    self.logger.warning(f"MP3编码器不可用，回退到AAC 192k: {str(e)}")
+                    fallback_args = {"acodec": "aac", "b:a": "192k", "ar": 44100, "ac": 2}
+                    input_args_fallback = {}
+                    if self.use_gpu:
+                        input_args_fallback["hwaccel"] = "cuda"
+                        input_args_fallback["hwaccel_output_format"] = "cuda"
+                    
+                    # 记录回退FFmpeg命令到日志
+                    self._log_ffmpeg_command(video_path, audio_path, input_args_fallback, fallback_args, f"MP3回退到AAC-{quality_desc}")
+                    
+                    (
+                        ffmpeg.input(video_path, **input_args_fallback)
+                        .output(audio_path, **fallback_args)
+                        .overwrite_output()
+                        .run(quiet=True)
+                    )
+                    self.logger.debug(f"AAC回退编码完成: {audio_path}")
+                    return
+                except Exception:
+                    pass  # 继续到下一个回退选项
+            
+            # GPU加速失败，回退到CPU处理
             try:
+                # 根据质量级别设置CPU回退参数
+                if audio_quality_level == 1:  # MP3级别回退到AAC
+                    fallback_args = {"acodec": "aac", "b:a": "192k", "ar": 44100, "ac": 2}
+                elif audio_quality_level == 2:  # AAC级别保持AAC
+                    fallback_args = {"acodec": "aac", "b:a": "128k", "ar": 32000, "ac": 2}
+                else:  # PCM级别或默认
+                    fallback_args = {"acodec": "pcm_s16le", "ar": 44100, "ac": 2}
+                
+                # 记录CPU回退FFmpeg命令到日志
+                self._log_ffmpeg_command(video_path, audio_path, {}, fallback_args, f"CPU回退处理-{quality_desc}")
+                
                 (
                     ffmpeg.input(video_path)
-                    .output(audio_path, acodec="pcm_s16le", ar=44100, ac=2)
+                    .output(audio_path, **fallback_args)
                     .overwrite_output()
                     .run(quiet=True)
                 )
-                self.logger.debug(f"GPU加速失败，使用CPU处理完成: {audio_path}")
+                self.logger.debug(f"CPU回退处理完成: {audio_path}")
             except Exception as cpu_e:
                 raise Exception(f"音频提取失败: {str(cpu_e)}")
 
-    def _create_silent_video(self, video_path: str, silent_video_path: str):
-        """创建无声视频，使用GPU硬件加速"""
+    def _create_silent_video(self, video_path: str, silent_video_path: str, video_quality_level: int = 0):
+        """创建无声视频，使用统一的libx264编码配置
+        
+        Args:
+            video_path: 输入视频路径
+            silent_video_path: 输出无声视频路径  
+            video_quality_level: 视频质量级别 (0=无损画质, 1=超高画质, 2=平衡质量, 3=高效压缩)
+        """
         try:
-            output_ext = Path(silent_video_path).suffix.lower()
-            
-            # RTX 4060Ti GPU编码配置
+            # 统一的libx264编码配置
             input_args = {}
             output_params = {}
-            
+
+            # 根据视频质量级别设置libx264编码参数 - 采用完善的FFmpeg参数格式
+            if video_quality_level == 0:  # 无损画质 (CRF 0)
+                quality_desc = "无损画质(CRF 0)"
+                output_params.update({
+                    "an": None,  # 明确禁用音频流
+                    "c:v": "libx264",  # 使用现代语法
+                    "preset": "medium",
+                    "crf": "0",
+                    "movflags": "+faststart"  # 优化文件结构
+                })
+            elif video_quality_level == 1:  # 超高画质 (CRF 18 slow)
+                quality_desc = "超高画质(CRF 18 slow)"
+                output_params.update({
+                    "an": None,  # 明确禁用音频流
+                    "c:v": "libx264",  # 使用现代语法
+                    "preset": "slow",
+                    "crf": "18",
+                    "movflags": "+faststart"  # 优化文件结构
+                })
+            elif video_quality_level == 2:  # 平衡质量 (CRF 20 slow)
+                quality_desc = "平衡质量(CRF 20 slow)"
+                output_params.update({
+                    "an": None,  # 明确禁用音频流
+                    "c:v": "libx264",  # 使用现代语法
+                    "preset": "slow",
+                    "crf": "20",
+                    "movflags": "+faststart"  # 优化文件结构
+                })
+            elif video_quality_level == 3:  # 高效压缩 (CRF 20 veryslow)
+                quality_desc = "高效压缩(CRF 20 veryslow)"
+                output_params.update({
+                    "an": None,  # 明确禁用音频流
+                    "c:v": "libx264",  # 使用现代语法
+                    "preset": "veryslow",
+                    "crf": "20",
+                    "movflags": "+faststart"  # 优化文件结构
+                })
+            else:
+                # 默认回退到无损画质
+                quality_desc = "无损画质(默认)"
+                output_params.update({
+                    "an": None,  # 明确禁用音频流
+                    "c:v": "libx264",  # 使用现代语法
+                    "preset": "medium",
+                    "crf": "0",
+                    "movflags": "+faststart"  # 优化文件结构
+                })
+                    
+            self.logger.info(f"创建无声视频使用{quality_desc}")
+
+            # GPU硬件解码优化（保留输入端优化）
             if self.use_gpu:
-                # 使用GPU硬件解码和编码
                 input_args["hwaccel"] = "cuda"
                 input_args["hwaccel_output_format"] = "cuda"
-                
-                if output_ext in [".mp4", ".m4v"]:
-                    output_params["vcodec"] = "h264_nvenc"
-                    output_params["preset"] = "p1"  # NVENC fastest preset
-                    output_params["tune"] = "hq"    # High quality
-                elif output_ext in [".webm"]:
-                    output_params["vcodec"] = "av1_nvenc"  # 或 "hevc_nvenc" 如果不支持AV1
-                    output_params["preset"] = "p1"
-                else:
-                    output_params["vcodec"] = "h264_nvenc"
-                    output_params["preset"] = "p1"
-                    output_params["tune"] = "hq"
-                    
-                self.logger.debug(f"使用GPU硬件编码: {output_params['vcodec']}")
-            else:
-                # CPU编码回退配置
-                if output_ext in [".mp4", ".m4v"]:
-                    output_params["vcodec"] = "libx264"
-                    output_params["preset"] = "fast"
-                elif output_ext in [".webm"]:
-                    output_params["vcodec"] = "libvpx-vp9"
-                else:
-                    output_params["vcodec"] = "libx264"
-                    output_params["preset"] = "fast"
-
+                self.logger.debug("使用CUDA硬件解码加速输入")
+            
+            # 记录FFmpeg命令到日志
+            self._log_ffmpeg_command(video_path, silent_video_path, input_args, output_params, f"创建无声视频-{quality_desc}")
+            
             try:
+                # 统一使用libx264软件编码，确保最佳兼容性和质量
                 (
                     ffmpeg.input(video_path, **input_args)
                     .video.output(silent_video_path, **output_params)
@@ -494,24 +683,20 @@ class MediaProcessorCore:
                 self.logger.debug(f"无声视频创建完成: {silent_video_path}")
             except Exception as e:
                 if self.use_gpu:
-                    # GPU编码失败，回退到CPU
-                    self.logger.warning(f"GPU编码失败，回退到CPU: {str(e)}")
-                    fallback_params = {"preset": "fast"}
-                    if output_ext in [".mp4", ".m4v"]:
-                        fallback_params["vcodec"] = "libx264"
-                    elif output_ext in [".webm"]:
-                        fallback_params["vcodec"] = "libvpx-vp9"
-                        fallback_params.pop("preset")
-                    else:
-                        fallback_params["vcodec"] = "libx264"
-
+                    # GPU解码失败，回退到CPU解码
+                    self.logger.warning(f"GPU解码失败，回退到CPU: {str(e)}")
+                    
+                    # 记录CPU回退FFmpeg命令到日志
+                    self._log_ffmpeg_command(video_path, silent_video_path, {}, output_params, f"CPU回退处理-{quality_desc}")
+                    
+                    # CPU解码 + libx264软件编码
                     (
                         ffmpeg.input(video_path)
-                        .video.output(silent_video_path, **fallback_params)
+                        .video.output(silent_video_path, **output_params)
                         .overwrite_output()
                         .run(quiet=True)
                     )
-                    self.logger.debug(f"CPU回退处理完成: {silent_video_path}")
+                    self.logger.debug(f"CPU解码编码完成: {silent_video_path}")
                 else:
                     raise
 
@@ -538,7 +723,7 @@ class MediaProcessorCore:
 
             # 加载音频
             waveform, sample_rate = torchaudio.load(audio_path)
-            
+
             # 转换音频格式以匹配模型要求
             waveform = convert_audio(
                 waveform, sample_rate, model_sample_rate, model_channels
@@ -547,52 +732,58 @@ class MediaProcessorCore:
             # 计算音频长度并决定是否分块处理
             audio_duration = waveform.shape[-1] / model_sample_rate
             max_chunk_duration = 300  # 5分钟为一块，充分利用16GB显存
-            
+
             if audio_duration > max_chunk_duration and self.use_gpu:
                 # 长音频分块处理，避免显存溢出
-                self.logger.info(f"长音频({audio_duration:.1f}s)将分块处理，充分利用16GB显存")
+                self.logger.info(
+                    f"长音频({audio_duration:.1f}s)将分块处理，充分利用16GB显存"
+                )
                 vocals_chunks = []
                 background_chunks = []
-                
+
                 chunk_samples = int(max_chunk_duration * model_sample_rate)
                 total_samples = waveform.shape[-1]
-                
+
                 for start_idx in range(0, total_samples, chunk_samples):
                     end_idx = min(start_idx + chunk_samples, total_samples)
                     chunk = waveform[:, start_idx:end_idx]
-                    
+
                     if self.use_gpu:
                         chunk = chunk.cuda().half()  # 使用FP16
-                    
+
                     # 处理块
                     with torch.no_grad():
-                        with torch.cuda.amp.autocast(enabled=self.use_gpu):  # 自动混合精度
+                        with torch.cuda.amp.autocast(
+                            enabled=self.use_gpu
+                        ):  # 自动混合精度
                             sources = apply_model(self.model, chunk.unsqueeze(0))[0]
-                    
+
                     # 提取人声和背景音乐
                     vocals_chunk = sources[3].cpu().float()  # 转回FP32保存
-                    background_chunk = (sources[0] + sources[1] + sources[2]).cpu().float()
-                    
+                    background_chunk = (
+                        (sources[0] + sources[1] + sources[2]).cpu().float()
+                    )
+
                     vocals_chunks.append(vocals_chunk)
                     background_chunks.append(background_chunk)
-                    
+
                     # 立即清理块内存
                     del sources, chunk
                     if self.use_gpu:
                         torch.cuda.empty_cache()
-                
+
                 # 合并所有块
                 vocals = torch.cat(vocals_chunks, dim=-1)
                 background = torch.cat(background_chunks, dim=-1)
-                
+
                 # 清理块列表
                 del vocals_chunks, background_chunks
-                
+
             else:
                 # 短音频或CPU处理，直接处理整个音频
                 if self.use_gpu:
                     waveform = waveform.cuda()
-                    if hasattr(self.model, 'half'):  # 确保模型支持FP16
+                    if hasattr(self.model, "half"):  # 确保模型支持FP16
                         waveform = waveform.half()
 
                 # 应用模型进行源分离
@@ -606,7 +797,7 @@ class MediaProcessorCore:
                 # 提取人声和背景音乐
                 vocals = sources[3].cpu().float()  # 转回FP32保存
                 background = (sources[0] + sources[1] + sources[2]).cpu().float()
-                
+
                 # 立即释放中间张量
                 del sources
                 if self.use_gpu:
@@ -615,13 +806,14 @@ class MediaProcessorCore:
             # 保存分离的音频
             sf.write(vocal_path, vocals.T.numpy(), model_sample_rate)
             sf.write(background_path, background.T.numpy(), model_sample_rate)
-            
+
             # 最终显存清理
             del vocals, background
             if self.use_gpu:
                 torch.cuda.empty_cache()
                 # 强制垃圾回收
                 import gc
+
                 gc.collect()
 
             self.logger.debug(
@@ -739,18 +931,18 @@ class MediaProcessorCore:
         """加载音频文件，使用内存缓存优化"""
         import hashlib
         import os
-        
+
         try:
             # 创建文件缓存键 - 基于文件路径和修改时间
             file_stat = os.stat(audio_path)
             cache_key = f"{audio_path}_{file_stat.st_mtime}_{file_stat.st_size}"
             cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:16]
-            
+
             # 检查缓存
             if self.enable_aggressive_caching and cache_hash in self._audio_cache:
                 self.logger.debug(f"从缓存加载音频: {os.path.basename(audio_path)}")
                 return self._audio_cache[cache_hash]
-            
+
             # 加载音频文件
             try:
                 # 优先使用librosa
@@ -760,13 +952,16 @@ class MediaProcessorCore:
                 audio_data, sample_rate = sf.read(audio_path)
                 if len(audio_data.shape) > 1:
                     audio_data = np.mean(audio_data, axis=1)  # 转换为单声道
-            
+
             # 计算音频数据大小并决定是否缓存
             if self.enable_aggressive_caching:
                 # 估算内存使用 (音频数据 + 元数据)
                 audio_size_gb = audio_data.nbytes / (1024**3)
-                
-                if audio_size_gb < 0.5 and self._cache_usage + audio_size_gb < self.cache_size_limit:
+
+                if (
+                    audio_size_gb < 0.5
+                    and self._cache_usage + audio_size_gb < self.cache_size_limit
+                ):
                     # 只缓存小于500MB的音频文件，避免内存溢出
                     if len(self._audio_cache) >= self.audio_cache_max_size:
                         # 清理最老的缓存项（简单的FIFO策略）
@@ -775,15 +970,17 @@ class MediaProcessorCore:
                         if isinstance(old_data, tuple) and len(old_data) == 2:
                             old_audio_size = old_data[0].nbytes / (1024**3)
                             self._cache_usage -= old_audio_size
-                    
+
                     # 添加到缓存
                     self._audio_cache[cache_hash] = (audio_data.copy(), sample_rate)
                     self._cache_usage += audio_size_gb
-                    self.logger.debug(f"音频已缓存: {os.path.basename(audio_path)} "
-                                    f"({audio_size_gb:.2f}GB, 总缓存: {self._cache_usage:.2f}GB)")
-            
+                    self.logger.debug(
+                        f"音频已缓存: {os.path.basename(audio_path)} "
+                        f"({audio_size_gb:.2f}GB, 总缓存: {self._cache_usage:.2f}GB)"
+                    )
+
             return audio_data, sample_rate
-            
+
         except Exception as e:
             raise Exception(f"无法加载音频文件: {str(e)}")
 
@@ -1097,37 +1294,41 @@ class MediaProcessorCore:
             input_video_args = {}
             input_audio_args = {}
             output_args = {}
-            
+
             if self.use_gpu:
                 # 使用GPU硬件解码
                 input_video_args["hwaccel"] = "cuda"
                 input_video_args["hwaccel_output_format"] = "cuda"
-                
+
                 # 使用GPU硬件编码
-                output_args.update({
-                    "vcodec": "h264_nvenc",
-                    "acodec": "aac",
-                    "preset": "p1",      # NVENC fastest preset  
-                    "tune": "hq",        # High quality
-                    "crf": "20",         # 提高质量，GPU编码可以承受
-                    "audio_bitrate": "192k",  # 提高音频质量
-                    "maxrate": "10M",    # 利用16GB显存的优势
-                    "bufsize": "20M",
-                    "t": final_duration
-                })
-                
+                output_args.update(
+                    {
+                        "vcodec": "h264_nvenc",
+                        "acodec": "aac",
+                        "preset": "p1",  # NVENC fastest preset
+                        "tune": "hq",  # High quality
+                        "crf": "20",  # 提高质量，GPU编码可以承受
+                        "audio_bitrate": "192k",  # 提高音频质量
+                        "maxrate": "10M",  # 利用16GB显存的优势
+                        "bufsize": "20M",
+                        "t": final_duration,
+                    }
+                )
+
                 self.logger.debug("使用GPU硬件加速合并音视频")
             else:
                 # CPU编码回退配置
-                output_args.update({
-                    "vcodec": "libx264",
-                    "acodec": "aac", 
-                    "preset": "fast",
-                    "crf": 23,
-                    "audio_bitrate": "128k",
-                    "t": final_duration
-                })
-            
+                output_args.update(
+                    {
+                        "vcodec": "libx264",
+                        "acodec": "aac",
+                        "preset": "fast",
+                        "crf": 23,
+                        "audio_bitrate": "128k",
+                        "t": final_duration,
+                    }
+                )
+
             input_video = ffmpeg.input(video_path, **input_video_args)
             input_audio = ffmpeg.input(audio_path, **input_audio_args)
 
@@ -1148,11 +1349,20 @@ class MediaProcessorCore:
 
             # 合并音视频流
             output = ffmpeg.output(
-                video_stream,
-                audio_stream,
-                output_path,
-                **output_args
+                video_stream, audio_stream, output_path, **output_args
             )
+
+            # 记录音视频合并FFmpeg命令到日志
+            input_paths = [video_path, audio_path]
+            input_args_list = [input_video_args, input_audio_args]
+            merge_description = f"音视频合并 (视频:{video_duration:.2f}s, 音频:{audio_duration:.2f}s)"
+            
+            if self.use_gpu:
+                merge_description += " - GPU加速"
+            else:
+                merge_description += " - CPU处理"
+            
+            self._log_ffmpeg_command(input_paths, str(output_path), input_args_list, output_args, merge_description)
 
             try:
                 # 执行GPU加速合并
@@ -1162,10 +1372,10 @@ class MediaProcessorCore:
                 if self.use_gpu:
                     # GPU合并失败，回退到CPU
                     self.logger.warning(f"GPU合并失败，回退到CPU: {str(e)}")
-                    
+
                     input_video_cpu = ffmpeg.input(video_path)
                     input_audio_cpu = ffmpeg.input(audio_path)
-                    
+
                     # 处理视频流
                     if audio_duration > video_duration:
                         video_stream_cpu = input_video_cpu["v"].filter(
@@ -1177,10 +1387,12 @@ class MediaProcessorCore:
                     # 处理音频流
                     if video_duration > audio_duration:
                         silence_duration = final_duration - audio_duration
-                        audio_stream_cpu = input_audio_cpu["a"].filter("apad", pad_dur=silence_duration)
+                        audio_stream_cpu = input_audio_cpu["a"].filter(
+                            "apad", pad_dur=silence_duration
+                        )
                     else:
                         audio_stream_cpu = input_audio_cpu["a"]
-                    
+
                     output_cpu = ffmpeg.output(
                         video_stream_cpu,
                         audio_stream_cpu,
@@ -1192,7 +1404,18 @@ class MediaProcessorCore:
                         audio_bitrate="128k",
                         t=final_duration,
                     )
-                    
+
+                    # 记录CPU回退合并FFmpeg命令到日志
+                    cpu_fallback_args = {
+                        "vcodec": "libx264",
+                        "acodec": "aac", 
+                        "preset": "fast",
+                        "crf": "23",
+                        "audio_bitrate": "128k",
+                        "t": final_duration,
+                    }
+                    self._log_ffmpeg_command([video_path, audio_path], str(output_path), [{}, {}], cpu_fallback_args, "CPU回退音视频合并")
+
                     ffmpeg.run(output_cpu, overwrite_output=True, quiet=True)
                     self.logger.debug(f"CPU回退合并完成: {output_path}")
                 else:
@@ -1215,10 +1438,16 @@ def get_media_processor_core() -> MediaProcessorCore:
 
 
 def separate_media_core(
-    video_path: str, output_dir: Optional[str] = None, enable_vocal_separation: bool = False
+    video_path: str,
+    output_dir: Optional[str] = None,
+    enable_vocal_separation: bool = False,
+    audio_quality_level: int = 0,
+    video_quality_level: int = 0,
 ) -> Dict[str, Any]:
     """便捷函数：分离视频中的人声、无声视频和背景音乐"""
-    return get_media_processor_core().separate_media(video_path, output_dir, enable_vocal_separation)
+    return get_media_processor_core().separate_media(
+        video_path, output_dir, enable_vocal_separation, audio_quality_level, video_quality_level
+    )
 
 
 def generate_reference_audio_core(

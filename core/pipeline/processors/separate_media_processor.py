@@ -51,13 +51,29 @@ class SeparateMediaProcessor(StepProcessor):
             media_separation_dir.mkdir(exist_ok=True)
 
             # 获取音频分离模式选项
-            enable_vocal_separation = getattr(task, 'options', {}).get('enable_vocal_separation', False)
+            enable_vocal_separation = getattr(task, "options", {}).get(
+                "enable_vocal_separation", False
+            )
+
+            # 获取音频质量级别选项
+            audio_quality_level = getattr(task, "options", {}).get("audio_quality_level", 0)
             
-            self.logger.info(f"开始媒体分离: {task.video_path} (模式: {'完整分离' if enable_vocal_separation else '快速模式'})")
+            # 获取视频质量级别选项
+            video_quality_level = getattr(task, "options", {}).get("video_quality_level", 0)
+
+            audio_quality_desc = ["最高质量", "高质量音频", "高效压缩"][audio_quality_level]
+            video_quality_desc = ["无损画质", "超高画质", "平衡质量", "高效压缩"][video_quality_level]
+            self.logger.info(
+                f"开始媒体分离: {task.video_path} (模式: {'完整分离' if enable_vocal_separation else '快速模式'}, 音频质量: {audio_quality_desc}, 视频质量: {video_quality_desc})"
+            )
 
             # 调用媒体分离功能
             result = separate_media_core(
-                str(task.video_path), str(media_separation_dir), enable_vocal_separation
+                str(task.video_path),
+                str(media_separation_dir),
+                enable_vocal_separation,
+                audio_quality_level,
+                video_quality_level,
             )
 
             if not result.get("success", False):

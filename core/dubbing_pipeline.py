@@ -24,8 +24,8 @@ from .pipeline.processors import (
 )
 
 
-
 # 注意：原来的StatusNotificationManager已被替换为更高效的异步StatusEventManager
+
 
 class DubbingPaths:
     """配音文件路径管理"""
@@ -272,22 +272,30 @@ class StreamlinePipeline(QObject):
         super().__init__()
         self.logger = logging.getLogger(__name__)
         self.output_dir = Path(output_dir) if output_dir else None
-        
+
         # 初始化异步状态事件管理器
         self.status_event_manager = StatusEventManager(self)
-        
+
         # 统一缓存管理器字典 {task_id: UnifiedCacheManager}
         self.cache_managers: Dict[str, UnifiedCacheManager] = {}
-        
+
         # 连接异步信号到现有GUI信号
         signal_emitter = self.status_event_manager.get_signal_emitter()
         signal_emitter.step_status_changed.connect(self.step_status_changed)
         signal_emitter.step_progress_changed.connect(self._on_step_progress_changed)
-        
+
         self.task_scheduler = self._initialize_task_scheduler()
         self.logger.info("StreamlinePipeline 初始化完成")
 
-    def _on_step_progress_changed(self, task_id: str, step_id: int, progress: float, current: int, total: int, message: str):
+    def _on_step_progress_changed(
+        self,
+        task_id: str,
+        step_id: int,
+        progress: float,
+        current: int,
+        total: int,
+        message: str,
+    ):
         """处理步骤进度变化信号（可以在这里添加额外的进度处理逻辑）"""
         # 目前只是转发，未来可以添加进度汇总、状态检查等逻辑
         pass
@@ -317,14 +325,22 @@ class StreamlinePipeline(QObject):
         """通过异步状态管理器统一处理状态通知"""
         try:
             if status == "processing":
-                self.status_event_manager.notify_step_started(task_id, step_id, message=message)
+                self.status_event_manager.notify_step_started(
+                    task_id, step_id, message=message
+                )
             elif status == "completed":
-                self.status_event_manager.notify_step_completed(task_id, step_id, message=message)
+                self.status_event_manager.notify_step_completed(
+                    task_id, step_id, message=message
+                )
             elif status == "failed":
-                self.status_event_manager.notify_step_failed(task_id, step_id, error_message=message, message=message)
+                self.status_event_manager.notify_step_failed(
+                    task_id, step_id, error_message=message, message=message
+                )
             else:
                 # 其他状态，记录日志但不处理
-                self.logger.debug(f"未知状态类型: {status}, 任务: {task_id}, 步骤: {step_id}")
+                self.logger.debug(
+                    f"未知状态类型: {status}, 任务: {task_id}, 步骤: {step_id}"
+                )
             return True
         except Exception as e:
             self.logger.error(f"状态通知失败: {e}")
@@ -335,13 +351,29 @@ class StreamlinePipeline(QObject):
         video_subtitle_pairs: List[Tuple[str, Optional[str]]],
         resume_from_cache: bool = True,
         enable_vocal_separation: bool = False,
+        audio_quality_level: int = 0,
+        video_quality_level: int = 0,
     ) -> Dict[str, Any]:
         """使用流水线模式批量处理视频"""
         start_time = time.time()
         self.logger.info(f"开始流水线批量处理 {len(video_subtitle_pairs)} 个视频")
-        self.logger.info(f"音频分离模式: {'完整分离' if enable_vocal_separation else '快速模式'}")
+        self.logger.info(
+            f"音频分离模式: {'完整分离' if enable_vocal_separation else '快速模式'}"
+        )
 
-        tasks = self._create_tasks(video_subtitle_pairs, resume_from_cache, enable_vocal_separation)
+        audio_quality_desc = ["最高质量", "高质量音频", "高效压缩"][audio_quality_level]
+        self.logger.info(f"音频质量设置: {audio_quality_desc}")
+        
+        video_quality_desc = ["无损画质", "超高画质", "平衡质量", "高效压缩"][video_quality_level]
+        self.logger.info(f"视频质量设置: {video_quality_desc}")
+
+        tasks = self._create_tasks(
+            video_subtitle_pairs,
+            resume_from_cache,
+            enable_vocal_separation,
+            audio_quality_level,
+            video_quality_level,
+        )
 
         try:
             results = self._execute_pipeline(tasks)
@@ -355,6 +387,8 @@ class StreamlinePipeline(QObject):
         video_subtitle_pairs: List[Tuple[str, Optional[str]]],
         resume_from_cache: bool,
         enable_vocal_separation: bool,
+        audio_quality_level: int = 0,
+        video_quality_level: int = 0,
     ):
         """创建任务列表"""
         tasks = []
@@ -366,12 +400,14 @@ class StreamlinePipeline(QObject):
                 task_id, video_path, subtitle_path, paths, resume_from_cache
             )
             self._setup_task_paths(task, paths)
-            
-            # 设置音频分离模式
-            if not hasattr(task, 'options'):
+
+            # 设置音频分离模式、音频质量级别和视频质量级别
+            if not hasattr(task, "options"):
                 task.options = {}
-            task.options['enable_vocal_separation'] = enable_vocal_separation
-            
+            task.options["enable_vocal_separation"] = enable_vocal_separation
+            task.options["audio_quality_level"] = audio_quality_level
+            task.options["video_quality_level"] = video_quality_level
+
             tasks.append(task)
 
         return tasks
@@ -386,36 +422,38 @@ class StreamlinePipeline(QObject):
     ):
         """创建或从缓存恢复任务"""
         task = None
-        
+
         # 初始化统一缓存管理器
         cache_manager = UnifiedCacheManager(paths.output_dir)
         self.cache_managers[task_id] = cache_manager
-        
+
         # 注册缓存管理器到异步状态管理器
         self.status_event_manager.register_cache_manager(task_id, cache_manager)
-        
+
         if resume_from_cache:
             # 使用统一缓存系统恢复任务
             try:
                 # 初始化缓存结构（如果不存在）
                 cache_manager.initialize_cache(task_id, video_path, subtitle_path)
-                
+
                 # 获取任务恢复点
                 resume_point = cache_manager.get_task_resume_point()
-                
+
                 if resume_point > 0:
                     # 有已完成的步骤，从缓存恢复
                     completed_steps = cache_manager.get_completed_steps()
-                    self.logger.info(f"从缓存恢复任务: {task_id}, 已完成步骤: {list(completed_steps)}, 恢复点: {resume_point}")
-                    
+                    self.logger.info(
+                        f"从缓存恢复任务: {task_id}, 已完成步骤: {list(completed_steps)}, 恢复点: {resume_point}"
+                    )
+
                     # 创建任务并设置恢复状态
                     task = Task(
-                        task_id=task_id, 
-                        video_path=video_path, 
-                        subtitle_path=subtitle_path
+                        task_id=task_id,
+                        video_path=video_path,
+                        subtitle_path=subtitle_path,
                     )
                     task.current_step = resume_point
-                    
+
                     # 设置已完成的步骤结果
                     for step_id in completed_steps:
                         step_result = cache_manager.load_step_result(step_id)
@@ -431,7 +469,7 @@ class StreamlinePipeline(QObject):
                             }
                 else:
                     self.logger.info(f"缓存中无已完成步骤，创建新任务: {task_id}")
-                    
+
             except Exception as e:
                 self.logger.warning(f"从缓存恢复任务失败: {e}，创建新任务")
         else:
@@ -452,7 +490,9 @@ class StreamlinePipeline(QObject):
         """获取任务的统一缓存管理器"""
         return self.cache_managers.get(task_id)
 
-    def get_step_cache_manager(self, task_id: str, step_id: int, step_name: str) -> Optional[StepCacheManager]:
+    def get_step_cache_manager(
+        self, task_id: str, step_id: int, step_name: str
+    ) -> Optional[StepCacheManager]:
         """获取步骤专用缓存管理器"""
         unified_cache = self.get_cache_manager(task_id)
         if unified_cache:

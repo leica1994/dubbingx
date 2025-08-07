@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -57,6 +58,7 @@ class DubbingGUI(QMainWindow):
         self.worker_thread = None
         self.parallel_batch_worker_thread = None
         from .pipeline import GUIStreamlinePipeline
+
         self.gui_pipeline = GUIStreamlinePipeline()
 
         # 连接日志信号
@@ -73,10 +75,12 @@ class DubbingGUI(QMainWindow):
         self._task_id_to_row_map = {}
         # 表格行到任务ID的反向映射表
         self._row_to_task_id_map = {}
-        
+
         # 添加状态更新的线程同步机制（简化版）
         self._status_update_lock = threading.Lock()
-        self._last_update_time = {}  # 格式: {(task_name, step_id): timestamp} - 用于防抖
+        self._last_update_time = (
+            {}
+        )  # 格式: {(task_name, step_id): timestamp} - 用于防抖
 
         # 设置窗口属性
         self.setWindowTitle("DubbingX - 智能视频配音系统")
@@ -485,6 +489,83 @@ class DubbingGUI(QMainWindow):
             QMessageBox QMessageBoxQuestion {
                 background-color: #ffffff;
             }
+            /* 下拉选择框样式 */
+            QComboBox {
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 8px 12px;
+                background-color: #ffffff;
+                font-size: 12px;
+                font-weight: 500;
+                color: #212529;
+                min-height: 20px;
+            }
+            QComboBox:focus {
+                border-color: #0d6efd;
+                box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left-width: 1px;
+                border-left-color: #ced4da;
+                border-left-style: solid;
+                border-top-right-radius: 3px;
+                border-bottom-right-radius: 3px;
+                background-color: #f8f9fa;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 6px solid #6c757d;
+                width: 0px;
+                height: 0px;
+            }
+            QComboBox::down-arrow:hover {
+                border-top: 6px solid #495057;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                background-color: #ffffff;
+                selection-background-color: #e7f3ff;
+                selection-color: #0d6efd;
+                font-size: 12px;
+                font-weight: 500;
+                color: #212529;
+                padding: 4px;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 10px 12px;
+                border: none;
+                min-height: 24px;
+                color: #212529;
+                font-weight: 500;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #f8f9fa;
+                color: #0d6efd;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #e7f3ff;
+                color: #0d6efd;
+            }
+            /* 标签文字样式优化 */
+            QGroupBox QLabel {
+                font-size: 12px;
+                color: #212529;
+                font-weight: 500;
+                background-color: transparent;
+            }
+            /* 选项组标签特别优化 */
+            QGroupBox[title="处理选项"] QLabel {
+                font-size: 13px;
+                color: #495057;
+                font-weight: 600;
+                padding: 2px 0px;
+            }
         """
         )
 
@@ -623,48 +704,82 @@ class DubbingGUI(QMainWindow):
 
         layout.addWidget(control_group)
 
-        # 处理选项组
+        # 处理选项组 - 重新设计为紧凑的下拉选择框布局
         options_group = QGroupBox("处理选项")
         options_layout = QVBoxLayout(options_group)
-        options_layout.setContentsMargins(15, 12, 15, 12)  # 减少内边距
+        options_layout.setContentsMargins(15, 12, 15, 12)
+        options_layout.setSpacing(12)
 
-        # 默认从缓存恢复处理（移除用户选择）
-
-        # 并行处理选项已移除 - 使用系统预设的每步骤线程池配置
-
-        # 音频分离模式选项
-        separation_layout = QVBoxLayout()
+        # 音频分离模式选项 - 下拉选择框
+        separation_layout = QHBoxLayout()
         separation_label = QLabel("音频分离模式:")
+        separation_label.setMinimumWidth(120)
         separation_layout.addWidget(separation_label)
+
+        self.separation_combo = QComboBox()
+        self.separation_combo.addItems([
+            "快速模式 (仅音视频分离)",
+            "完整分离 (人声/背景分离)"
+        ])
+        self.separation_combo.setCurrentIndex(0)  # 默认快速模式
+        self.separation_combo.setMinimumWidth(250)
+        separation_layout.addWidget(self.separation_combo)
+        separation_layout.addStretch()
         
-        separation_radio_layout = QHBoxLayout()
-        self.full_separation_radio = QRadioButton("完整分离 (人声/背景分离)")
-        self.fast_separation_radio = QRadioButton("快速模式 (仅音视频分离)")
-        self.fast_separation_radio.setChecked(True)  # 默认选择快速模式
-        
-        self.separation_button_group = QButtonGroup()
-        self.separation_button_group.addButton(self.full_separation_radio, 0)
-        self.separation_button_group.addButton(self.fast_separation_radio, 1)
-        
-        separation_radio_layout.addWidget(self.full_separation_radio)
-        separation_radio_layout.addWidget(self.fast_separation_radio)
-        separation_radio_layout.addStretch()
-        
-        separation_layout.addLayout(separation_radio_layout)
         options_layout.addLayout(separation_layout)
 
-        # Index-TTS API配置
-        api_options_layout = QHBoxLayout()
+        # 音频质量设置选项 - 下拉选择框
+        audio_quality_layout = QHBoxLayout()
+        audio_quality_label = QLabel("音频质量设置:")
+        audio_quality_label.setMinimumWidth(120)
+        audio_quality_layout.addWidget(audio_quality_label)
 
-        api_options_layout.addWidget(QLabel("Index-TTS API:"))
+        self.audio_quality_combo = QComboBox()
+        self.audio_quality_combo.addItems([
+            "最高质量 (PCM无损)",
+            "高质量音频 (MP3 192kbps)",
+            "高效压缩 (AAC 128kbps)"
+        ])
+        self.audio_quality_combo.setCurrentIndex(1)  # 默认高质量音频
+        self.audio_quality_combo.setMinimumWidth(250)
+        audio_quality_layout.addWidget(self.audio_quality_combo)
+        audio_quality_layout.addStretch()
+        
+        options_layout.addLayout(audio_quality_layout)
+
+        # 视频质量设置选项 - 下拉选择框
+        video_quality_layout = QHBoxLayout()
+        video_quality_label = QLabel("视频质量设置:")
+        video_quality_label.setMinimumWidth(120)
+        video_quality_layout.addWidget(video_quality_label)
+
+        self.video_quality_combo = QComboBox()
+        self.video_quality_combo.addItems([
+            "无损画质 (CRF 0)",
+            "超高画质 (CRF 18 slow)",
+            "平衡质量 (CRF 20 slow)",
+            "高效压缩 (CRF 20 veryslow)"
+        ])
+        self.video_quality_combo.setCurrentIndex(2)  # 默认平衡质量
+        self.video_quality_combo.setMinimumWidth(250)
+        video_quality_layout.addWidget(self.video_quality_combo)
+        video_quality_layout.addStretch()
+        
+        options_layout.addLayout(video_quality_layout)
+
+        # Index-TTS API配置 - 保持原有设计
+        api_options_layout = QHBoxLayout()
+        api_label = QLabel("Index-TTS API:")
+        api_label.setMinimumWidth(120)
+        api_options_layout.addWidget(api_label)
 
         self.api_url_edit = QLineEdit()
         self.api_url_edit.setPlaceholderText("http://127.0.0.1:7860")
         self.api_url_edit.setText("http://127.0.0.1:7860")  # 设置默认值
-        self.api_url_edit.setMinimumWidth(200)
+        self.api_url_edit.setMinimumWidth(250)
         api_options_layout.addWidget(self.api_url_edit)
-
         api_options_layout.addStretch()
+        
         options_layout.addLayout(api_options_layout)
 
         layout.addWidget(options_group)
@@ -1016,7 +1131,7 @@ class DubbingGUI(QMainWindow):
                     task_name = task_match.group(1).strip()
                     # 可以根据具体日志内容推断步骤
                     self.logger.debug(f"从日志解析到任务完成: {task_name}")
-            
+
         except Exception as e:
             # 不让日志解析错误影响GUI运行
             pass
@@ -1150,14 +1265,26 @@ class DubbingGUI(QMainWindow):
             self.file_table.setCellWidget(i, 3, checkbox)
 
     def update_task_step_status(
-        self, task_name: str, step_id: int, status: str, message: str = "", force_update: bool = False
+        self,
+        task_name: str,
+        step_id: int,
+        status: str,
+        message: str = "",
+        force_update: bool = False,
     ):
         """更新特定任务的步骤状态（简化版本，配合异步状态管理系统）"""
         with self._status_update_lock:
-            return self._update_task_step_status_simplified(task_name, step_id, status, message, force_update)
+            return self._update_task_step_status_simplified(
+                task_name, step_id, status, message, force_update
+            )
 
     def _update_task_step_status_simplified(
-        self, task_name: str, step_id: int, status: str, message: str = "", force_update: bool = False
+        self,
+        task_name: str,
+        step_id: int,
+        status: str,
+        message: str = "",
+        force_update: bool = False,
     ):
         """简化的状态更新方法（配合异步状态管理系统）"""
         try:
@@ -1178,11 +1305,17 @@ class DubbingGUI(QMainWindow):
 
             # 检查状态是否需要更新
             current_icon = step_item.text()
-            new_icon, color, tooltip = self._get_status_display(step_id, status, message)
-            
+            new_icon, color, tooltip = self._get_status_display(
+                step_id, status, message
+            )
+
             # 判断是否更新（简化的逻辑）
-            should_update = force_update or current_icon != new_icon or self._should_allow_status_change(current_icon, new_icon)
-            
+            should_update = (
+                force_update
+                or current_icon != new_icon
+                or self._should_allow_status_change(current_icon, new_icon)
+            )
+
             if should_update:
                 step_item.setText(new_icon)
                 step_item.setForeground(color)
@@ -1195,10 +1328,10 @@ class DubbingGUI(QMainWindow):
 
                 # 更新整体状态
                 self.update_overall_task_status(task_row)
-                
+
                 # 强制刷新表格
                 self.status_table.viewport().update()
-                
+
                 self.logger.debug(
                     f"状态已更新: task_name={task_name}, step={step_id}, {current_icon} -> {new_icon}"
                 )
@@ -1210,16 +1343,34 @@ class DubbingGUI(QMainWindow):
         except Exception as e:
             self.logger.error(f"更新任务步骤状态失败: {e}")
 
-    def _get_status_display(self, step_id: int, status: str, message: str = "") -> Tuple[str, QColor, str]:
+    def _get_status_display(
+        self, step_id: int, status: str, message: str = ""
+    ) -> Tuple[str, QColor, str]:
         """获取状态显示信息"""
         if status == "processing":
-            return "🔄", QColor("#fd7e14"), f"步骤{step_id + 1}: 处理中{' - ' + message if message else ''}"
+            return (
+                "🔄",
+                QColor("#fd7e14"),
+                f"步骤{step_id + 1}: 处理中{' - ' + message if message else ''}",
+            )
         elif status == "completed":
-            return "✅", QColor("#198754"), f"步骤{step_id + 1}: 已完成{' - ' + message if message else ''}"
+            return (
+                "✅",
+                QColor("#198754"),
+                f"步骤{step_id + 1}: 已完成{' - ' + message if message else ''}",
+            )
         elif status == "failed":
-            return "❌", QColor("#dc3545"), f"步骤{step_id + 1}: 失败{' - ' + message if message else ''}"
+            return (
+                "❌",
+                QColor("#dc3545"),
+                f"步骤{step_id + 1}: 失败{' - ' + message if message else ''}",
+            )
         else:
-            return "⏸️", QColor("#6c757d"), f"步骤{step_id + 1}: 未开始{' - ' + message if message else ''}"
+            return (
+                "⏸️",
+                QColor("#6c757d"),
+                f"步骤{step_id + 1}: 未开始{' - ' + message if message else ''}",
+            )
 
     def _should_allow_status_change(self, current_icon: str, new_icon: str) -> bool:
         """判断是否允许状态变化（简化版）"""
@@ -1227,7 +1378,7 @@ class DubbingGUI(QMainWindow):
         priority = {"✅": 3, "❌": 2, "🔄": 1, "⏸️": 0}
         current_priority = priority.get(current_icon, 0)
         new_priority = priority.get(new_icon, 0)
-        
+
         # 允许状态升级或失败状态
         return new_priority >= current_priority or new_icon == "❌"
 
@@ -1250,17 +1401,20 @@ class DubbingGUI(QMainWindow):
 
             # 立即更新状态（线程安全版本）
             with self._status_update_lock:
-                self._update_task_step_status_by_row(task_row, step_id, status, message, force_update)
-                
+                self._update_task_step_status_by_row(
+                    task_row, step_id, status, message, force_update
+                )
+
             # 强制刷新界面（确保状态立即显示）
-            if hasattr(self, 'status_table'):
+            if hasattr(self, "status_table"):
                 self.status_table.viewport().update()
-                
+
             # 处理应用事件，确保界面更新
             QApplication.processEvents()
 
         except Exception as e:
             import traceback
+
             traceback.print_exc()
             self.logger.error(f"直接状态更新失败: {e}")
             self.logger.debug(
@@ -1268,7 +1422,12 @@ class DubbingGUI(QMainWindow):
             )
 
     def _update_task_step_status_by_row(
-        self, task_row: int, step_id: int, status: str, message: str = "", force_update: bool = False
+        self,
+        task_row: int,
+        step_id: int,
+        status: str,
+        message: str = "",
+        force_update: bool = False,
     ):
         """直接通过表格行更新状态（避免名称查找）"""
         try:
@@ -1288,11 +1447,17 @@ class DubbingGUI(QMainWindow):
 
             # 检查状态是否需要更新
             current_icon = step_item.text()
-            new_icon, color, tooltip = self._get_status_display(step_id, status, message)
-            
+            new_icon, color, tooltip = self._get_status_display(
+                step_id, status, message
+            )
+
             # 判断是否更新
-            should_update = force_update or current_icon != new_icon or self._should_allow_status_change(current_icon, new_icon)
-            
+            should_update = (
+                force_update
+                or current_icon != new_icon
+                or self._should_allow_status_change(current_icon, new_icon)
+            )
+
             if should_update:
                 step_item.setText(new_icon)
                 step_item.setForeground(color)
@@ -1305,7 +1470,7 @@ class DubbingGUI(QMainWindow):
 
                 # 更新整体状态
                 self.update_overall_task_status(task_row)
-                
+
                 # 强制刷新表格
                 self.status_table.viewport().update()
 
@@ -1313,7 +1478,13 @@ class DubbingGUI(QMainWindow):
             self.logger.error(f"更新任务行状态失败: {e}")
 
     def update_step_progress_direct(
-        self, task_id: str, step_id: int, progress: float, current: int, total: int, message: str = ""
+        self,
+        task_id: str,
+        step_id: int,
+        progress: float,
+        current: int,
+        total: int,
+        message: str = "",
     ):
         """直接更新步骤进度（配合异步状态管理系统）"""
         try:
@@ -1327,7 +1498,7 @@ class DubbingGUI(QMainWindow):
             # 防抖机制：避免频繁的进度更新
             update_key = (task_name, step_id)
             current_time = time.time()
-            
+
             with self._status_update_lock:
                 last_time = self._last_update_time.get(update_key, 0)
                 # 每200ms最多更新一次进度，避免界面卡顿
@@ -1356,7 +1527,7 @@ class DubbingGUI(QMainWindow):
                     progress_text += f" ({current}/{total})"
                 if message:
                     progress_text += f" - {message}"
-                    
+
                 tooltip = f"步骤{step_id + 1}: 处理中 - {progress_text}"
                 step_item.setToolTip(tooltip)
 
@@ -1367,9 +1538,7 @@ class DubbingGUI(QMainWindow):
         except Exception as e:
             self.logger.debug(f"进度更新失败: {e}")
 
-    def update_task_status_direct(
-        self, task_id: str, status: str, message: str = ""
-    ):
+    def update_task_status_direct(self, task_id: str, status: str, message: str = ""):
         """直接更新任务整体状态（配合异步状态管理系统）"""
         try:
             # 从task_id提取任务名
@@ -1383,10 +1552,8 @@ class DubbingGUI(QMainWindow):
             task_row = self._find_task_row(task_name)
             if task_row != -1:
                 self.update_overall_task_status(task_row)
-                
-            self.logger.debug(
-                f"任务状态更新: {task_name} - {status} - {message}"
-            )
+
+            self.logger.debug(f"任务状态更新: {task_name} - {status} - {message}")
 
         except Exception as e:
             self.logger.debug(f"任务状态更新失败: {e}")
@@ -1401,7 +1568,7 @@ class DubbingGUI(QMainWindow):
                     video_name = Path(video_item.text()).stem
                     if video_name == task_name:
                         return i
-            
+
             # 清理后匹配
             clean_task_name = re.sub(r"[^\w\u4e00-\u9fff]", "", task_name)
             for i in range(self.status_table.rowCount()):
@@ -1411,7 +1578,7 @@ class DubbingGUI(QMainWindow):
                     clean_video_name = re.sub(r"[^\w\u4e00-\u9fff]", "", video_name)
                     if clean_task_name == clean_video_name:
                         return i
-            
+
             return -1
         except:
             return -1
@@ -1545,7 +1712,7 @@ class DubbingGUI(QMainWindow):
                 # 任务ID格式: streamline_task_{i:03d}_{video_stem}
                 video_stem = Path(video_path).stem  # 获取不含扩展名的文件名
                 task_id = f"streamline_task_{i:03d}_{video_stem}"
-                
+
                 # 建立双向映射
                 self._task_id_to_row_map[task_id] = i
                 self._row_to_task_id_map[i] = task_id
@@ -1564,13 +1731,13 @@ class DubbingGUI(QMainWindow):
 
                 # 尝试加载缓存状态
                 cached_status = self._load_cached_task_status(video_path)
-                
+
                 # 初始化8个步骤状态列（列索引 1-8）
                 for step_idx in range(8):
                     if cached_status and step_idx in cached_status:
                         # 从缓存恢复状态
                         step_status = cached_status[step_idx]
-                        
+
                         if step_status == "completed":
                             step_item = QTableWidgetItem("✅")
                             step_item.setForeground(QColor("#198754"))  # 绿色
@@ -1600,7 +1767,7 @@ class DubbingGUI(QMainWindow):
                         step_item = QTableWidgetItem("⏸️")
                         step_item.setForeground(QColor("#6c757d"))  # 灰色
                         tooltip = f"步骤{step_idx + 1}: {step_names[step_idx]} - 未开始"
-                    
+
                     step_item.setToolTip(tooltip)
                     step_item.setTextAlignment(Qt.AlignCenter)
                     step_item.setFlags(
@@ -1614,6 +1781,7 @@ class DubbingGUI(QMainWindow):
         except Exception as e:
             self.logger.error(f"初始化状态表格失败: {e}")
             import traceback
+
             traceback.print_exc()
 
     def _load_cached_task_status(self, video_path: str) -> Optional[Dict[int, str]]:
@@ -1628,29 +1796,30 @@ class DubbingGUI(QMainWindow):
 
             # 尝试使用统一缓存系统
             from ..cache import UnifiedCacheManager
+
             unified_cache = UnifiedCacheManager(output_dir)
-            
+
             # 检查缓存目录是否存在
             if not unified_cache.cache_dir.exists():
                 self.logger.debug(f"统一缓存目录不存在: {unified_cache.cache_dir}")
                 return self._load_legacy_cached_status(video_path)  # 回退到传统缓存
-            
+
             # 获取状态摘要
             summary = unified_cache.get_step_status_summary()
             if "error" in summary:
                 self.logger.debug(f"获取缓存状态摘要失败: {summary['error']}")
                 return self._load_legacy_cached_status(video_path)
-            
+
             # 转换为GUI需要的格式
             step_status = {}
             step_details = summary.get("step_details", {})
-            
+
             for step_idx in range(8):
                 step_key = str(step_idx)
                 if step_key in step_details:
                     cache_status = step_details[step_key]["status"]
                     progress = step_details[step_key].get("progress_percent", 0)
-                    
+
                     # 转换状态名称
                     if cache_status == "completed":
                         step_status[step_idx] = "completed"
@@ -1666,7 +1835,7 @@ class DubbingGUI(QMainWindow):
                         step_status[step_idx] = "pending"
                 else:
                     step_status[step_idx] = "pending"
-            
+
             completed_count = summary.get("completed_steps", 0)
             return step_status if completed_count > 0 else None
 
@@ -1702,7 +1871,7 @@ class DubbingGUI(QMainWindow):
             # 简化的状态提取逻辑
             task_data = cache_data.get("task", {})
             step_results = task_data.get("step_results", {})
-            
+
             # 转换为GUI需要的格式
             status_map = {}
             for step_id_str, result in step_results.items():
@@ -1809,11 +1978,21 @@ class DubbingGUI(QMainWindow):
 
         try:
             # 获取音频分离模式设置
-            enable_vocal_separation = self.full_separation_radio.isChecked()
+            enable_vocal_separation = self.separation_combo.currentIndex() == 1  # 1为完整分离
+
+            # 获取音频质量设置
+            audio_quality_level = self.audio_quality_combo.currentIndex()  # 0=最高质量, 1=高质量音频, 2=高效压缩
             
+            # 获取视频质量设置
+            video_quality_level = self.video_quality_combo.currentIndex()  # 0=无损画质, 1=超高画质, 2=平衡质量, 3=高效压缩
+
             # 创建统一的批量处理工作线程
             self.worker_thread = StreamlineBatchDubbingWorkerThread(
-                video_subtitle_pairs, True, enable_vocal_separation  # 默认从缓存恢复，传递音频分离模式
+                video_subtitle_pairs,
+                True,
+                enable_vocal_separation,
+                audio_quality_level,
+                video_quality_level,  # 传递视频质量参数
             )
 
             # 连接信号 - 统一使用批量处理的信号处理
@@ -1821,14 +2000,22 @@ class DubbingGUI(QMainWindow):
 
             # 重新连接到worker线程中实际处理任务的pipeline信号发送器
             # 这里连接到实际发送信号的AsyncSignalEmitter实例
-            worker_signal_emitter = self.worker_thread.pipeline.status_event_manager.get_signal_emitter()
-            worker_signal_emitter.step_status_changed.connect(self.update_step_status_direct)
-            worker_signal_emitter.step_progress_changed.connect(self.update_step_progress_direct)
-            worker_signal_emitter.task_status_changed.connect(self.update_task_status_direct)
+            worker_signal_emitter = (
+                self.worker_thread.pipeline.status_event_manager.get_signal_emitter()
+            )
+            worker_signal_emitter.step_status_changed.connect(
+                self.update_step_status_direct
+            )
+            worker_signal_emitter.step_progress_changed.connect(
+                self.update_step_progress_direct
+            )
+            worker_signal_emitter.task_status_changed.connect(
+                self.update_task_status_direct
+            )
 
             # 初始化状态表格并连接日志信号（单文件和批量模式都显示）
             self.initialize_status_table(video_subtitle_pairs)
-            
+
             self.worker_thread.log_message.connect(self.append_log_message)
 
             # 启动线程
@@ -1902,7 +2089,6 @@ class DubbingGUI(QMainWindow):
 
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-
 
     def _initialize_tts_processor(self, api_url: str):
         """初始化TTS处理器"""

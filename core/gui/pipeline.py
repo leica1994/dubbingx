@@ -68,10 +68,18 @@ class GUIStreamlinePipeline(StreamlinePipeline):
         video_subtitle_pairs: List[Tuple[str, Optional[str]]],
         resume_from_cache: bool = True,
         enable_vocal_separation: bool = False,
+        audio_quality_level: int = 0,
+        video_quality_level: int = 0,
     ) -> Dict[str, Any]:
         """使用流水线模式批量处理视频（带GUI日志支持）"""
         self._ensure_logging_setup()
-        return super().process_batch_streamline(video_subtitle_pairs, resume_from_cache, enable_vocal_separation)
+        return super().process_batch_streamline(
+            video_subtitle_pairs,
+            resume_from_cache,
+            enable_vocal_separation,
+            audio_quality_level,
+            video_quality_level,
+        )
 
     def _ensure_logging_setup(self):
         """确保日志处理器已设置"""
