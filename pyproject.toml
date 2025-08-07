@@ -2,7 +2,7 @@
 name = "dubbingx"
 version = "0.1.0"
 description = "智能视频配音系统，支持GPU加速和声音克隆"
-authors = [{ name = "DubbingX Team", email = "team@dubbingx.com" }]
+authors = [{ name = "Leica", email = "leica2019@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
 license = { text = "MIT" }
@@ -62,7 +62,7 @@ torchvision = [
 [project.optional-dependencies]
 dev = [
     "black>=23.0.0",
-    "isort>=5.12.0", 
+    "isort>=5.12.0",
     "flake8>=6.0.0",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
