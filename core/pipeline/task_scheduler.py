@@ -49,16 +49,16 @@ class TaskScheduler:
         """
         self.logger = logging.getLogger(__name__)
 
-        # 工作线程数配置（每个步骤独立配置）
+        # 工作线程数配置（针对RTX 4060Ti + 48GB RAM + i5优化）
         self.max_workers_per_step = max_workers_per_step or {
-            0: 8,  # preprocess_subtitle - CPU密集型，多线程处理
-            1: 1,  # separate_media - GPU任务，避免并发竞争
-            2: 2,  # generate_reference_audio - GPU任务
-            3: 4,  # generate_tts - 外部服务调用，CPU任务
-            4: 2,  # align_audio - GPU任务
-            5: 2,  # generate_aligned_srt - GPU任务
-            6: 2,  # process_video_speed - GPU任务
-            7: 2,  # merge_audio_video - GPU任务
+            0: 12,  # preprocess_subtitle - CPU密集型，利用i5多核心（8->12）
+            1: 1,   # separate_media - GPU任务，避免并发竞争（保持1）
+            2: 6,   # generate_reference_audio - 内存密集型，利用48GB内存（2->6）
+            3: 6,   # generate_tts - 外部服务调用，I/O密集型（4->6）
+            4: 3,   # align_audio - GPU+内存任务，适度增加（2->3）
+            5: 4,   # generate_aligned_srt - 内存密集型，利用大内存（2->4）
+            6: 3,   # process_video_speed - GPU+内存任务，适度增加（2->3）
+            7: 2,   # merge_audio_video - GPU密集型，保持稳定（保持2）
         }
 
         # 队列管理器

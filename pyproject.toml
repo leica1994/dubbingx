@@ -29,6 +29,7 @@ dependencies = [
     # HTTP客户端
     "httpx",
     "diffq>=0.2.4",
+    "psutil>=7.0.0",
 ]
 
 [build-system]
