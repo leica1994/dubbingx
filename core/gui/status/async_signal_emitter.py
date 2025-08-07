@@ -149,16 +149,40 @@ class AsyncSignalEmitter(QObject):
             signal_key = self._generate_signal_key(event)
             current_time = time.time() * 1000  # 毫秒
             
+            # 对于关键状态事件，使用更短的去重窗口
+            dedup_window = self._get_dedup_window(event)
+            
             # 检查是否需要去重
             if signal_key in self._signal_cache:
                 cached_event, cached_time = self._signal_cache[signal_key]
-                if current_time - cached_time < self._dedup_window_ms:
+                if current_time - cached_time < dedup_window:
                     # 在去重时间窗口内，跳过
                     self._stats["deduped_events"] += 1
                     return False
             
             # 更新缓存
             self._signal_cache[signal_key] = (event, current_time)
+            
+            # 对于关键状态事件，立即发送而不是批量处理
+            if event.event_type in [StatusEventType.STEP_STARTED, 
+                                   StatusEventType.STEP_COMPLETED, 
+                                   StatusEventType.STEP_FAILED]:
+                try:
+                    if event.step_id is not None:
+                        self.logger.debug(f"立即发送步骤状态信号: task_id={event.task_id}, step_id={event.step_id}, status={event.status}")
+                        self.step_status_changed.emit(
+                            event.task_id,
+                            event.step_id,
+                            event.status,
+                            event.message or ""
+                        )
+                        # 强制Qt事件循环处理
+                        from PySide6.QtCore import QCoreApplication
+                        QCoreApplication.processEvents()
+                        return True
+                except Exception as e:
+                    self.logger.error(f"立即发送步骤状态信号失败: {e}")
+                    # 如果立即发送失败，回退到批量处理
             
             # 确定队列类型
             queue_type = self._get_queue_type(event)
@@ -184,12 +208,30 @@ class AsyncSignalEmitter(QObject):
             self.logger.error(f"队列状态事件失败: {e}")
             return False
 
+    def _get_dedup_window(self, event: StatusEvent) -> float:
+        """获取事件的去重时间窗口"""
+        # 对于关键状态转换事件，使用更短的去重窗口
+        if event.event_type in [StatusEventType.STEP_STARTED, 
+                               StatusEventType.STEP_COMPLETED, 
+                               StatusEventType.STEP_FAILED,
+                               StatusEventType.TASK_COMPLETED,
+                               StatusEventType.TASK_FAILED]:
+            return 25  # 25ms，足够短以防止快速状态转换被去重
+        else:
+            return self._dedup_window_ms  # 使用默认的100ms
+
     def _generate_signal_key(self, event: StatusEvent) -> str:
         """生成信号键用于去重"""
         base_key = f"{event.task_id}_{event.event_type.value}"
         
         if event.step_id is not None:
             base_key += f"_{event.step_id}"
+        
+        # 对于步骤状态事件，添加状态值以防止状态转换被去重
+        if event.event_type in [StatusEventType.STEP_STARTED, 
+                               StatusEventType.STEP_COMPLETED, 
+                               StatusEventType.STEP_FAILED]:
+            base_key += f"_{event.status}"
         
         # 对于进度事件，添加进度值以实现更精细的去重
         if event.event_type == StatusEventType.STEP_PROGRESS:
@@ -291,16 +333,24 @@ class AsyncSignalEmitter(QObject):
         for event in events:
             try:
                 if event.step_id is not None:
+                    # 添加调试日志
+                    self.logger.debug(f"发送步骤状态信号: task_id={event.task_id}, step_id={event.step_id}, status={event.status}")
+                    
                     self.step_status_changed.emit(
                         event.task_id,
                         event.step_id,
                         event.status,
                         event.message or ""
                     )
+                    
+                    # 确保信号立即处理（强制Qt事件循环处理）
+                    from PySide6.QtCore import QCoreApplication
+                    QCoreApplication.processEvents()
+                    
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                self.logger.debug(f"发送步骤状态信号失败: {e}")
+                self.logger.error(f"发送步骤状态信号失败 (task_id={event.task_id}, step_id={event.step_id}): {e}")
 
     def _emit_progress_events(self, events: List[StatusEvent]) -> None:
         """发送进度事件信号"""

@@ -64,3 +64,4 @@ models/
 Thumbs.db
 *.tmp
 *.baklog.txt
+log.txt
