@@ -2,7 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-请使用中文回答我问题.
+## 始终使用中文回复
+- 在所有沟通和代码注释中，必须使用中文进行交流
+- 保持语言的专业性和技术准确性
 
 ## Project Overview
 

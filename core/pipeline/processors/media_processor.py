@@ -27,7 +27,7 @@ class MediaProcessorCore:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.model = None
-        self.use_gpu = torch.cuda.is_available()
+        self.use_gpu = self._detect_gpu_capabilities()
 
         # 内存缓存系统 - 充分利用48GB内存
         import psutil
@@ -62,13 +62,116 @@ class MediaProcessorCore:
         self._result_cache = {}  # 计算结果缓存
         self._cache_usage = 0  # 当前缓存使用量(GB)
 
-        # 打印GPU状态
-        if self.use_gpu:
+    def _detect_gpu_capabilities(self) -> bool:
+        """检测GPU硬件解码能力，包括PyTorch CUDA和FFmpeg CUDA支持
+        
+        Returns:
+            bool: 是否可以使用GPU硬件加速
+        """
+        try:
+            # 1. 检查PyTorch CUDA支持
+            if not torch.cuda.is_available():
+                self.logger.info("PyTorch CUDA不可用，使用CPU处理")
+                return False
+            
+            # 2. 检查FFmpeg CUDA硬件解码支持
+            if not self._check_ffmpeg_cuda_support():
+                gpu_name = torch.cuda.get_device_name(0)
+                self.logger.warning(f"检测到GPU {gpu_name}，但FFmpeg不支持CUDA硬件解码，使用CPU处理")
+                return False
+            
+            # 3. GPU信息输出
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
             self.logger.info(f"使用GPU加速: {gpu_name} ({gpu_memory:.1f}GB)")
+            return True
+            
+        except Exception as e:
+            self.logger.warning(f"GPU检测失败，使用CPU处理: {str(e)}")
+            return False
+    
+    def _check_ffmpeg_cuda_support(self) -> bool:
+        """检查FFmpeg是否支持CUDA硬件解码
+        
+        Returns:
+            bool: FFmpeg是否支持CUDA
+        """
+        try:
+            import subprocess
+            
+            # 检查FFmpeg是否支持cuda硬件加速
+            result = subprocess.run(
+                ["ffmpeg", "-hwaccels"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0 and "cuda" in result.stdout.lower():
+                self.logger.debug("FFmpeg支持CUDA硬件解码")
+                return True
+            else:
+                self.logger.debug("FFmpeg不支持CUDA硬件解码")
+                return False
+                
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+            self.logger.debug(f"FFmpeg CUDA检测失败: {str(e)}")
+            return False
+    
+    def _analyze_gpu_decode_failure(self, error_msg: str) -> str:
+        """分析GPU解码失败的可能原因
+        
+        Args:
+            error_msg: 错误消息
+            
+        Returns:
+            失败原因的描述
+        """
+        error_lower = error_msg.lower()
+        
+        # 常见GPU解码失败原因分析
+        if "out of memory" in error_lower or "cuda out of memory" in error_lower:
+            return "显存不足"
+        elif "no cuda capable" in error_lower or "cuda device" in error_lower:
+            return "CUDA设备不可用"
+        elif "unsupported format" in error_lower or "codec not supported" in error_lower:
+            return "视频编码格式不支持硬件解码"
+        elif "invalid argument" in error_lower or "invalid data" in error_lower:
+            return "视频文件格式或参数无效"
+        elif "decoder" in error_lower and ("not found" in error_lower or "unavailable" in error_lower):
+            return "找不到合适的硬件解码器"
+        elif "permission denied" in error_lower:
+            return "权限不足"
+        elif "busy" in error_lower or "device busy" in error_lower:
+            return "GPU设备繁忙"
+        elif "hardware accelerated" in error_lower or "hwaccel" in error_lower:
+            return "硬件加速初始化失败"
+        elif "format not supported" in error_lower or "pixel format" in error_lower:
+            return "像素格式不支持"
+        elif "cannot initialize" in error_lower or "initialization failed" in error_lower:
+            return "CUDA初始化失败"
+        elif "nvenc" in error_lower or "nvdec" in error_lower:
+            return "NVIDIA编解码器问题"
+        elif "driver" in error_lower:
+            return "显卡驱动问题"
+        elif "timeout" in error_lower:
+            return "GPU处理超时"
+        elif "connection refused" in error_lower or "device not found" in error_lower:
+            return "GPU设备连接失败"
+        elif "resource temporarily unavailable" in error_lower:
+            return "GPU资源暂时不可用"
+        elif "impossible to convert between" in error_lower or "auto_scale" in error_lower:
+            return "像素格式转换失败(需要移除hwaccel_output_format参数)"
+        elif "function not implemented" in error_lower:
+            return "GPU硬件解码功能未实现或不支持"
+        elif "ffmpeg error" in error_lower and len(error_msg) < 50:
+            return "FFmpeg执行错误(可能是兼容性问题)"
         else:
-            self.logger.info("使用CPU处理")
+            # 尝试从错误消息中提取更有用的信息
+            if len(error_msg) > 100:
+                return f"GPU解码错误: {error_msg[:100]}..."
+            else:
+                return f"GPU解码错误: {error_msg}"
 
     def separate_media(
             self,
@@ -478,11 +581,11 @@ class MediaProcessorCore:
 
             self.logger.info(f"提取音频使用{quality_desc}")
 
-            # 启用GPU硬件解码加速
+            # 启用GPU硬件解码加速（音频处理兼容性优化）
             if self.use_gpu:
                 input_args["hwaccel"] = "cuda"
-                input_args["hwaccel_output_format"] = "cuda"
-                self.logger.debug("使用CUDA硬件加速解码")
+                # 音频处理不需要hwaccel_output_format，让FFmpeg自动处理
+                self.logger.debug("使用CUDA硬件加速解码（音频提取）")
 
             # 创建FFmpeg流并记录命令到日志
             ffmpeg_stream = (
@@ -504,7 +607,7 @@ class MediaProcessorCore:
                     input_args_fallback = {}
                     if self.use_gpu:
                         input_args_fallback["hwaccel"] = "cuda"
-                        input_args_fallback["hwaccel_output_format"] = "cuda"
+                        # 移除hwaccel_output_format以提高兼容性
 
                     # 创建回退FFmpeg流并记录命令到日志
                     fallback_stream = (
@@ -608,11 +711,14 @@ class MediaProcessorCore:
 
             self.logger.info(f"创建无声视频使用{quality_desc}")
 
-            # GPU硬件解码优化（保留输入端优化）
+            # GPU硬件解码优化（修复像素格式转换问题）
             if self.use_gpu:
+                # 方案1：只使用CUDA解码，不使用hwaccel_output_format，让FFmpeg自动转换到系统内存
                 input_args["hwaccel"] = "cuda"
-                input_args["hwaccel_output_format"] = "cuda"
-                self.logger.debug("使用CUDA硬件解码加速输入")
+                # 不设置 hwaccel_output_format，让FFmpeg自动转换到兼容格式
+                self.logger.debug("使用CUDA硬件解码（自动格式转换）")
+            else:
+                self.logger.debug("使用CPU解码")
 
             # 创建FFmpeg流并记录命令到日志
             silent_video_stream = (
@@ -623,13 +729,18 @@ class MediaProcessorCore:
             self._log_ffmpeg_command(silent_video_stream, f"创建无声视频-{quality_desc}")
 
             try:
-                # 执行FFmpeg命令
-                silent_video_stream.run(quiet=True)
+                # 执行FFmpeg命令并捕获详细错误信息
+                silent_video_stream.run(quiet=False, capture_stdout=True, capture_stderr=True)
                 self.logger.debug(f"无声视频创建完成: {silent_video_path}")
-            except Exception as e:
+            except ffmpeg.Error as e:
                 if self.use_gpu:
-                    # GPU解码失败，回退到CPU解码
-                    self.logger.warning(f"GPU解码失败，回退到CPU: {str(e)}")
+                    # 从ffmpeg.Error中提取stderr信息
+                    stderr_output = e.stderr.decode('utf-8', errors='ignore') if e.stderr else str(e)
+                    
+                    # GPU解码失败，分析失败原因并回退到CPU解码
+                    failure_reason = self._analyze_gpu_decode_failure(stderr_output)
+                    self.logger.warning(f"GPU解码失败，回退到CPU: {failure_reason}")
+                    self.logger.debug(f"GPU解码错误详情: {stderr_output}")
 
                     # 创建CPU回退FFmpeg流并记录命令到日志
                     cpu_silent_video_stream = (
@@ -639,9 +750,39 @@ class MediaProcessorCore:
                     )
                     self._log_ffmpeg_command(cpu_silent_video_stream, f"CPU回退处理-{quality_desc}")
 
-                    # 执行CPU回退FFmpeg命令
-                    cpu_silent_video_stream.run(quiet=True)
-                    self.logger.debug(f"CPU解码编码完成: {silent_video_path}")
+                    try:
+                        # 执行CPU回退FFmpeg命令
+                        cpu_silent_video_stream.run(quiet=False, capture_stdout=True, capture_stderr=True)
+                        self.logger.info(f"CPU回退处理成功: {silent_video_path}")
+                    except ffmpeg.Error as cpu_e:
+                        cpu_stderr = cpu_e.stderr.decode('utf-8', errors='ignore') if cpu_e.stderr else str(cpu_e)
+                        self.logger.error(f"CPU回退处理也失败: {cpu_stderr}")
+                        raise Exception(f"GPU和CPU处理都失败: GPU错误={stderr_output[:200]}..., CPU错误={cpu_stderr[:200]}...")
+                else:
+                    raise
+            except Exception as e:
+                if self.use_gpu:
+                    # 处理其他类型的异常
+                    error_msg = str(e)
+                    failure_reason = self._analyze_gpu_decode_failure(error_msg)
+                    self.logger.warning(f"GPU解码失败，回退到CPU: {failure_reason}")
+                    self.logger.debug(f"GPU解码错误详情: {error_msg}")
+
+                    # 创建CPU回退FFmpeg流并记录命令到日志
+                    cpu_silent_video_stream = (
+                        ffmpeg.input(video_path)
+                        .video.output(silent_video_path, **output_params)
+                        .overwrite_output()
+                    )
+                    self._log_ffmpeg_command(cpu_silent_video_stream, f"CPU回退处理-{quality_desc}")
+
+                    try:
+                        # 执行CPU回退FFmpeg命令
+                        cpu_silent_video_stream.run(quiet=False, capture_stdout=True, capture_stderr=True)
+                        self.logger.info(f"CPU回退处理成功: {silent_video_path}")
+                    except Exception as cpu_e:
+                        self.logger.error(f"CPU回退处理也失败: {str(cpu_e)}")
+                        raise Exception(f"GPU和CPU处理都失败: GPU错误={error_msg}, CPU错误={str(cpu_e)}")
                 else:
                     raise
 
@@ -1241,9 +1382,8 @@ class MediaProcessorCore:
             output_args = {}
 
             if self.use_gpu:
-                # 使用GPU硬件解码
+                # 使用GPU硬件解码（移除output_format以提高兼容性）
                 input_video_args["hwaccel"] = "cuda"
-                input_video_args["hwaccel_output_format"] = "cuda"
 
                 # 使用GPU硬件编码
                 output_args.update(
