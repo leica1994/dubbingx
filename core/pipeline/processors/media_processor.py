@@ -107,7 +107,7 @@ class MediaProcessorCore:
                 output_dir.mkdir(parents=True, exist_ok=True)
 
             video_name = Path(video_path).stem
-            video_ext = Path(video_path).suffix
+            video_ext = '.mp4'
 
             # 定义输出文件路径
             silent_video_path = output_dir / f"{video_name}_silent{video_ext}"

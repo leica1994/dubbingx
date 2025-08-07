@@ -38,7 +38,7 @@ class DubbingPaths:
     ):
         self.video_path = Path(video_path)
         self.video_name = self.video_path.stem
-        self.video_ext = self.video_path.suffix
+        self.video_ext = '.mp4'
 
         self.subtitle_path = self._resolve_subtitle_path(subtitle_path)
         self.output_dir = self._setup_output_directory(output_dir)
@@ -98,7 +98,7 @@ class DubbingPaths:
             self._media_separation_dir / f"{self.video_name}_background.wav"
         )
         self._silent_video = (
-            self._media_separation_dir / f"{self.video_name}_silent{self.video_ext}"
+            self._media_separation_dir / f"{self.video_name}_silent.mp4"
         )
         self._reference_audio_dir = self.output_dir / "reference_audio"
         self._tts_output_dir = self.output_dir / "tts_output"
@@ -363,7 +363,7 @@ class StreamlinePipeline(QObject):
 
         audio_quality_desc = ["最高质量", "高质量音频", "高效压缩"][audio_quality_level]
         self.logger.info(f"音频质量设置: {audio_quality_desc}")
-        
+
         video_quality_desc = ["无损画质", "超高画质", "平衡质量", "高效压缩"][video_quality_level]
         self.logger.info(f"视频质量设置: {video_quality_desc}")
 

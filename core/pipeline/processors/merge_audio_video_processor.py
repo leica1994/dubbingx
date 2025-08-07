@@ -53,11 +53,10 @@ class MergeAudioVideoProcessor(StepProcessor):
                     error=f"文件不存在: {aligned_audio_path}",
                 )
 
-            # 获取输出目录和最终视频路径
+            # 获取输出目录和最终视频路径 - 统一使用.mp4格式
             output_dir = Path(task.paths.get("output_dir", ""))
             video_name = Path(task.video_path).stem
-            video_ext = Path(task.video_path).suffix
-            final_video_path = output_dir / f"{video_name}_dubbed{video_ext}"
+            final_video_path = output_dir / f"{video_name}_dubbed.mp4"
 
             self.logger.info(
                 f"开始音视频合并: {speed_adjusted_video_path} + {aligned_audio_path}"

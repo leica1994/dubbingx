@@ -80,12 +80,11 @@ class ProcessVideoSpeedProcessor(StepProcessor):
                     error=result.get("error", "未知错误"),
                 )
 
-            # 构建输出文件路径（根据函数行为推断）
+            # 构建输出文件路径（根据函数行为推断）- 统一使用.mp4格式
             video_name = Path(task.video_path).stem
-            video_ext = Path(task.video_path).suffix
             speed_adjusted_video_path = (
                 adjusted_video_dir
-                / f"final_speed_adjusted_{video_name}_silent{video_ext}"
+                / f"final_speed_adjusted_{video_name}_silent.mp4"
             )
 
             # 更新任务路径信息
