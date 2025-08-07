@@ -195,7 +195,9 @@ class Task:
 
     def set_step_result(self, step: int, result: ProcessResult) -> None:
         """设置步骤处理结果"""
-        self.step_results[step] = result
+        # 修复数据类型不匹配问题：使用字符串key匹配存储格式
+        step_key = str(step)
+        self.step_results[step_key] = result
         self.updated_at = datetime.now()
 
         if result.success:
@@ -208,12 +210,26 @@ class Task:
 
     def get_step_result(self, step: int) -> Optional[ProcessResult]:
         """获取步骤处理结果"""
-        return self.step_results.get(step)
+        # 修复数据类型不匹配问题：使用字符串key匹配存储格式
+        step_key = str(step)
+        return self.step_results.get(step_key)
 
     def is_step_completed(self, step: int) -> bool:
         """检查指定步骤是否已完成"""
-        result = self.step_results.get(step)
-        return result is not None and result.success
+        # 修复数据类型不匹配问题：使用字符串key匹配存储格式
+        step_key = str(step)
+        result = self.step_results.get(step_key)
+        if result is None:
+            return False
+        
+        # 检查结果格式（新的字典格式）
+        if isinstance(result, dict):
+            success = result.get("success", False)
+            # 修复逻辑错误：如果success为True，就是完成的，不管partial_success的值
+            return success
+        else:
+            # 兼容旧格式（ProcessResult对象）
+            return result.success
 
     def can_retry(self) -> bool:
         """检查是否可以重试"""

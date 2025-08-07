@@ -86,6 +86,20 @@ class StepProcessor(ABC):
                     f"任务 {task.task_id} 步骤 {self.step_name} 从中断处继续执行"
                 )
                 result = self._resume_from_interruption_with_status_update(task, step_detail)
+            elif step_status == StepStatus.FAILED:
+                # 步骤之前失败了，重新执行
+                self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 之前失败，现在重新执行")
+                # 重置步骤状态和清除失败结果
+                step_detail.status = StepStatus.PENDING
+                
+                # 清除之前的失败结果，以便重新处理
+                if hasattr(task, 'step_results') and str(self.step_id) in task.step_results:
+                    prev_result = task.step_results[str(self.step_id)]
+                    if isinstance(prev_result, dict) and not prev_result.get("success", True):
+                        # 只清除失败的结果
+                        del task.step_results[str(self.step_id)]
+                
+                result = self._execute_process_with_status_update(task, step_detail)
             else:
                 # 步骤未进行，从头开始
                 self.logger.info(f"任务 {task.task_id} 步骤 {self.step_name} 开始执行")
@@ -322,46 +336,28 @@ class StepProcessor(ABC):
     def _notify_status_change(self, task: Task, status: str, message: str = "") -> None:
         """通知流水线状态变化 - 使用异步状态管理器"""
         try:
-            self.logger.info(f"🔔 开始通知状态变化: task={task.task_id}, step={self.step_id}, status={status}")
-            
             if hasattr(task, "pipeline_ref") and task.pipeline_ref:
-                self.logger.info(f"✅ 找到pipeline_ref: {type(task.pipeline_ref)}")
-                
                 # 获取异步状态管理器
                 status_manager = getattr(task.pipeline_ref, "status_event_manager", None)
                 if status_manager:
-                    self.logger.info(f"✅ 找到status_event_manager: {type(status_manager)}")
-                    
                     # 直接使用异步状态管理器发送事件
                     if status == "processing":
                         # 获取步骤详情来确定总项目数
                         step_detail = task.get_step_detail(self.step_id)
                         total_items = step_detail.total_items if step_detail else 1
-                        self.logger.info(f"📤 发送processing事件: total_items={total_items}")
                         status_manager.notify_step_started(task.task_id, self.step_id, total_items, message)
                     elif status == "completed":
-                        self.logger.info(f"📤 发送completed事件")
                         status_manager.notify_step_completed(task.task_id, self.step_id, message)
                     elif status == "failed":
-                        self.logger.info(f"📤 发送failed事件")
                         status_manager.notify_step_failed(task.task_id, self.step_id, message, message)
-                    else:
-                        self.logger.warning(f"❌ 未处理的状态类型: {status}")
-                        
-                    self.logger.info(f"🎯 状态事件发送完成")
                 else:
-                    self.logger.warning(f"❌ 没有找到status_event_manager，回退到同步方式")
                     # 回退到原来的同步方式（兼容性）
                     task.pipeline_ref.notify_step_status(
                         task.task_id, self.step_id, status, message
                     )
-            else:
-                self.logger.warning(f"❌ 没有找到pipeline_ref")
                 
         except Exception as e:
-            self.logger.error(
-                f"❌ 通知状态变化失败: {e}", exc_info=True
-            )  # 改为error级别，并显示详细堆栈
+            self.logger.error(f"通知状态变化失败: {e}", exc_info=True)
 
     def _notify_progress_change(self, task: Task, current_item: int, total_items: int, message: str = "") -> None:
         """通知进度变化 - 使用异步状态管理器"""

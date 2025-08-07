@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, Signal
 
 from core.util import sanitize_filename
 from core.cache import UnifiedCacheManager, StepCacheManager
-from core.status import StatusEventManager
+from core.gui.status import StatusEventManager
 from .pipeline import Task, TaskScheduler
 from .pipeline.processors import (
     AlignAudioProcessor,

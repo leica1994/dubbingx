@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QObject, QTimer
 
-from ..cache import UnifiedCacheManager
+from ...cache import UnifiedCacheManager
 from .async_signal_emitter import AsyncSignalEmitter
 from .async_status_manager import StatusCache, StatusEvent, StatusEventType
 

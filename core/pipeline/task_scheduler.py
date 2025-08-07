@@ -318,12 +318,21 @@ class TaskScheduler:
             max_completed_step = -1
 
             for step_id in range(len(self.STEP_DEFINITIONS)):
-                # 检查步骤结果
-                if step_id in task.step_results:
-                    result = task.step_results[step_id]
-                    if result.success and not result.partial_success:
+                # 检查步骤结果 - 修复数据类型不匹配问题
+                step_id_str = str(step_id)  # 转换为字符串以匹配存储时的格式
+                if step_id_str in task.step_results:
+                    result = task.step_results[step_id_str]
+                    # 使用新的字典格式
+                    success = result.get("success", False)
+                    
+                    # 修复逻辑错误：如果success为True，就是完成的，不管partial_success的值
+                    if success:
                         max_completed_step = step_id
                         continue
+                    else:
+                        # 遇到失败的步骤，从这里重新开始
+                        self.logger.info(f"任务 {task.task_id} 检测到失败步骤 {step_id}，将从此步骤重新开始")
+                        break
 
                 # 检查步骤详情状态
                 if step_id in task.step_details:
@@ -331,8 +340,12 @@ class TaskScheduler:
                     if detail.status == StepStatus.COMPLETED:
                         max_completed_step = step_id
                         continue
+                    elif detail.status == StepStatus.FAILED:
+                        # 遇到失败的步骤，从这里重新开始
+                        self.logger.info(f"任务 {task.task_id} 检测到失败步骤 {step_id}，将从此步骤重新开始")
+                        break
 
-                # 如果步骤未完成或失败，从这里开始
+                # 如果步骤未完成，从这里开始
                 break
 
             # 从下一个未完成的步骤开始
