@@ -69,8 +69,8 @@ class GenerateTTSProcessor(StepProcessor):
                 task, step_detail, reference_results, str(tts_output_dir)
             )
 
-            if result.get("success", False):
-                # 更新任务路径信息
+            if result.get("successful_segments", 0) > 0:
+                # 有成功片段时更新任务路径信息
                 task.paths.update(
                     {
                         "tts_output_dir": str(tts_output_dir),
@@ -86,22 +86,37 @@ class GenerateTTSProcessor(StepProcessor):
                     f"TTS生成完成: {successful}/{total} 成功, {failed} 失败"
                 )
 
-                # 只有全部成功才返回success=True
+                # 严格判定：只有全部成功才返回success=True
                 is_fully_successful = successful == total and failed == 0
 
-                return ProcessResult(
-                    success=is_fully_successful,
-                    message=f"TTS生成完成: {successful}/{total} 成功, {failed} 失败",
-                    data={
-                        "total_segments": total,
-                        "successful_segments": successful,
-                        "failed_segments": failed,
-                        "results_file": result.get("results_file", ""),
-                        "output_dir": str(tts_output_dir),
-                    },
-                    step_detail=step_detail,
-                    partial_success=(successful > 0 and failed > 0),  # 标记为部分成功
-                )
+                if is_fully_successful:
+                    return ProcessResult(
+                        success=True,
+                        message=f"TTS生成完成: {successful}/{total} 成功",
+                        data={
+                            "total_segments": total,
+                            "successful_segments": successful,
+                            "failed_segments": failed,
+                            "results_file": result.get("results_file", ""),
+                            "output_dir": str(tts_output_dir),
+                        },
+                        step_detail=step_detail,
+                    )
+                else:
+                    # 有失败片段，标记为失败
+                    return ProcessResult(
+                        success=False,
+                        message=f"TTS生成不完整: {successful}/{total} 成功, {failed} 失败",
+                        error=f"有 {failed} 个片段生成失败",
+                        data={
+                            "total_segments": total,
+                            "successful_segments": successful,
+                            "failed_segments": failed,
+                            "results_file": result.get("results_file", ""),
+                            "output_dir": str(tts_output_dir),
+                        },
+                        step_detail=step_detail,
+                    )
             else:
                 return ProcessResult(
                     success=False,
@@ -128,7 +143,7 @@ class GenerateTTSProcessor(StepProcessor):
         output_dir: str,
     ) -> dict:
         """
-        使用TTSProcessor批量生成TTS
+        使用TTSProcessor批量生成TTS - 带两阶段重试机制
 
         Args:
             task: 任务对象
@@ -142,41 +157,58 @@ class GenerateTTSProcessor(StepProcessor):
         try:
             self.logger.info(f"开始批量生成TTS: {reference_results_path}")
 
-            # 直接调用TTSProcessor的批量处理方法
-            result = generate_tts_from_reference(
-                reference_results_path=reference_results_path, output_dir=output_dir
+            # 第一阶段：首次尝试，失败的立即重试5次
+            result = self._attempt_tts_generation_with_retries(
+                reference_results_path, output_dir, max_retries=5, stage="第一阶段"
             )
 
             if result.get("success", False):
-                # 获取生成统计信息
-                total_segments = result.get("total_segments", 0)
-                successful_segments = result.get("successful_segments", 0)
                 failed_segments = result.get("failed_segments", 0)
+                total_segments = result.get("total_segments", 0)
+
+                # 如果有失败的片段，进行第二阶段重试
+                if failed_segments > 0:
+                    self.logger.info(f"第二阶段：对失败的 {failed_segments} 个片段进行最终重试")
+                    
+                    # 第二阶段：对失败片段最终重试5次
+                    retry_result = self._attempt_tts_generation_with_retries(
+                        reference_results_path, output_dir, max_retries=5, stage="第二阶段"
+                    )
+
+                    if retry_result.get("success", False):
+                        # 更新最终统计
+                        result["successful_segments"] = retry_result.get("successful_segments", 0)
+                        result["failed_segments"] = retry_result.get("failed_segments", 0)
+                        result["results_file"] = retry_result.get("results_file", "")
+
+                        self.logger.info(
+                            f"第二阶段重试完成: {result['successful_segments']}/{total_segments} 成功"
+                        )
 
                 # 更新步骤详情
-                step_detail.total_items = total_segments
-                step_detail.current_item = successful_segments
-                step_detail.update_progress(successful_segments, total_segments)
-
-                if successful_segments == total_segments:
-                    # 全部成功
-                    step_detail.status = StepStatus.COMPLETED
-                elif successful_segments > 0:
-                    # 部分成功
-                    step_detail.status = StepStatus.PROCESSING
-                else:
-                    # 全部失败
-                    step_detail.status = StepStatus.FAILED
-
-                self.logger.info(
-                    f"TTS生成完成: {successful_segments}/{total_segments} 成功, {failed_segments} 失败"
+                step_detail.total_items = result.get("total_segments", 0)
+                step_detail.current_item = result.get("successful_segments", 0)
+                step_detail.update_progress(
+                    result.get("successful_segments", 0), 
+                    result.get("total_segments", 0)
                 )
 
+                # 严格判定：只有全部成功才标记为完成，否则就是失败
+                if result.get("successful_segments", 0) == result.get("total_segments", 0):
+                    # 全部成功
+                    step_detail.status = StepStatus.COMPLETED
+                else:
+                    # 有任何失败片段就标记为失败，不继续后续步骤
+                    step_detail.status = StepStatus.FAILED
+                    self.logger.error(
+                        f"TTS生成不完整，失败片段: {result.get('failed_segments', 0)}，标记为失败"
+                    )
+
                 return {
-                    "success": successful_segments > 0,  # 有成功的就算成功
-                    "total_segments": total_segments,
-                    "successful_segments": successful_segments,
-                    "failed_segments": failed_segments,
+                    "success": result.get("successful_segments", 0) == result.get("total_segments", 0),  # 只有全部成功才算成功
+                    "total_segments": result.get("total_segments", 0),
+                    "successful_segments": result.get("successful_segments", 0),
+                    "failed_segments": result.get("failed_segments", 0),
                     "results_file": result.get("results_file", ""),
                     "output_dir": output_dir,
                 }
@@ -208,6 +240,71 @@ class GenerateTTSProcessor(StepProcessor):
                 "successful_segments": 0,
                 "failed_segments": 0,
             }
+
+    def _attempt_tts_generation_with_retries(
+        self, reference_results_path: str, output_dir: str, max_retries: int, stage: str = ""
+    ) -> dict:
+        """
+        尝试TTS生成并进行重试
+
+        Args:
+            reference_results_path: 参考音频结果文件路径
+            output_dir: 输出目录
+            max_retries: 最大重试次数
+            stage: 阶段标识
+
+        Returns:
+            生成结果字典
+        """
+        self.logger.info(f"{stage}开始TTS生成，最大重试次数: {max_retries}")
+
+        # 首次尝试
+        result = generate_tts_from_reference(
+            reference_results_path=reference_results_path, output_dir=output_dir
+        )
+
+        if result.get("success", False):
+            failed_segments = result.get("failed_segments", 0)
+            if failed_segments == 0:
+                self.logger.info(f"{stage}首次尝试完全成功")
+                return result
+
+        # 重试机制
+        for retry_count in range(1, max_retries + 1):
+            if result.get("failed_segments", 0) == 0:
+                break  # 没有失败片段，无需重试
+
+            self.logger.warning(
+                f"{stage}第 {retry_count} 次重试，剩余失败片段: {result.get('failed_segments', 0)}"
+            )
+
+            try:
+                retry_result = generate_tts_from_reference(
+                    reference_results_path=reference_results_path, output_dir=output_dir
+                )
+
+                if retry_result.get("success", False):
+                    # 更新结果
+                    result = retry_result
+                    if result.get("failed_segments", 0) == 0:
+                        self.logger.info(f"{stage}第 {retry_count} 次重试完全成功")
+                        break
+                    else:
+                        self.logger.info(
+                            f"{stage}第 {retry_count} 次重试部分成功，剩余失败: {result.get('failed_segments', 0)}"
+                        )
+                else:
+                    self.logger.warning(f"{stage}第 {retry_count} 次重试失败")
+
+            except Exception as e:
+                self.logger.warning(f"{stage}第 {retry_count} 次重试异常: {str(e)}")
+
+        if result.get("failed_segments", 0) > 0:
+            self.logger.error(
+                f"{stage}经过 {max_retries} 次重试后仍有 {result.get('failed_segments', 0)} 个片段失败"
+            )
+
+        return result
 
     def _resume_from_interruption(
         self, task: Task, step_detail: StepProgressDetail
