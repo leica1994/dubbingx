@@ -6,7 +6,7 @@ TTS生成处理器 - 步骤 3
 
 from pathlib import Path
 
-from core.tts_processor import generate_tts_from_reference
+from core.tts_processor import generate_tts_from_reference, retry_failed_segments
 
 from ..step_processor import StepProcessor
 from ..task import ProcessResult, StepProgressDetail, StepStatus, Task
@@ -245,7 +245,7 @@ class GenerateTTSProcessor(StepProcessor):
         self, reference_results_path: str, output_dir: str, max_retries: int, stage: str = ""
     ) -> dict:
         """
-        尝试TTS生成并进行重试
+        尝试TTS生成并进行精确片段级重试
 
         Args:
             reference_results_path: 参考音频结果文件路径
@@ -258,53 +258,82 @@ class GenerateTTSProcessor(StepProcessor):
         """
         self.logger.info(f"{stage}开始TTS生成，最大重试次数: {max_retries}")
 
-        # 首次尝试
+        # 首次尝试：处理所有片段
         result = generate_tts_from_reference(
             reference_results_path=reference_results_path, output_dir=output_dir
         )
 
-        if result.get("success", False):
-            failed_segments = result.get("failed_segments", 0)
-            if failed_segments == 0:
-                self.logger.info(f"{stage}首次尝试完全成功")
-                return result
+        if not result.get("success", False):
+            return result
 
-        # 重试机制
+        # 检查是否有失败片段
+        failed_indices = result.get("failed_segment_indices", [])
+        if not failed_indices:
+            self.logger.info(f"{stage}首次尝试完全成功")
+            return result
+
+        original_total = result.get("total_segments", 0)
+        cumulative_successful = result.get("successful_segments", 0)
+
+        # 重试机制：只重试失败的片段
         for retry_count in range(1, max_retries + 1):
-            if result.get("failed_segments", 0) == 0:
+            if not failed_indices:
                 break  # 没有失败片段，无需重试
 
             self.logger.warning(
-                f"{stage}第 {retry_count} 次重试，剩余失败片段: {result.get('failed_segments', 0)}"
+                f"{stage}第 {retry_count} 次重试，目标失败片段: {failed_indices}"
             )
 
             try:
-                retry_result = generate_tts_from_reference(
-                    reference_results_path=reference_results_path, output_dir=output_dir
+                # 精确重试：只处理失败的片段
+                retry_result = retry_failed_segments(
+                    reference_results_path=reference_results_path, 
+                    failed_indices=failed_indices,
+                    output_dir=output_dir
                 )
 
                 if retry_result.get("success", False):
-                    # 更新结果
-                    result = retry_result
-                    if result.get("failed_segments", 0) == 0:
-                        self.logger.info(f"{stage}第 {retry_count} 次重试完全成功")
-                        break
-                    else:
-                        self.logger.info(
-                            f"{stage}第 {retry_count} 次重试部分成功，剩余失败: {result.get('failed_segments', 0)}"
-                        )
+                    # 重试成功，更新统计
+                    retry_successful = retry_result.get("retry_successful_segments", 0)
+                    cumulative_successful += retry_successful
+                    failed_indices = []  # 全部成功
+                    
+                    self.logger.info(f"{stage}第 {retry_count} 次重试完全成功，重试成功 {retry_successful} 个片段")
+                    break
                 else:
-                    self.logger.warning(f"{stage}第 {retry_count} 次重试失败")
+                    # 部分重试成功
+                    retry_successful = retry_result.get("retry_successful_segments", 0)
+                    cumulative_successful += retry_successful
+                    failed_indices = retry_result.get("failed_segment_indices", [])
+                    
+                    if retry_successful > 0:
+                        self.logger.info(
+                            f"{stage}第 {retry_count} 次重试部分成功，成功 {retry_successful} 个，剩余失败: {failed_indices}"
+                        )
+                    else:
+                        self.logger.warning(f"{stage}第 {retry_count} 次重试完全失败")
 
             except Exception as e:
                 self.logger.warning(f"{stage}第 {retry_count} 次重试异常: {str(e)}")
 
-        if result.get("failed_segments", 0) > 0:
+        # 构建最终结果
+        final_failed_count = len(failed_indices)
+        
+        if final_failed_count > 0:
             self.logger.error(
-                f"{stage}经过 {max_retries} 次重试后仍有 {result.get('failed_segments', 0)} 个片段失败"
+                f"{stage}经过 {max_retries} 次重试后仍有 {final_failed_count} 个片段失败: {failed_indices}"
             )
 
-        return result
+        final_result = {
+            "success": final_failed_count == 0,
+            "total_segments": original_total,
+            "successful_segments": cumulative_successful,
+            "failed_segments": final_failed_count,
+            "failed_segment_indices": failed_indices,
+            "results_file": result.get("results_file", ""),
+        }
+
+        return final_result
 
     def _resume_from_interruption(
         self, task: Task, step_detail: StepProgressDetail
