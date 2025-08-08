@@ -4,12 +4,114 @@ TTS生成处理器 - 步骤 3
 负责基于参考音频生成TTS语音
 """
 
+import json
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from core.tts_processor import generate_tts_from_reference, retry_failed_segments
+from core.tts_processor import generate_tts_from_reference
 
 from ..step_processor import StepProcessor
 from ..task import ProcessResult, StepProgressDetail, StepStatus, Task
+
+
+def retry_failed_segments(
+    reference_results_path: str,
+    failed_indices: List[int],
+    output_dir: str
+) -> Dict[str, Any]:
+    """
+    精确重试失败的TTS片段
+    
+    Args:
+        reference_results_path: 参考音频结果文件路径
+        failed_indices: 失败片段的索引列表
+        output_dir: 输出目录
+        
+    Returns:
+        包含重试结果的字典
+    """
+    import logging
+    from core.tts_processor import TTSProcessor
+    
+    logger = logging.getLogger(__name__)
+    
+    if not failed_indices:
+        return {
+            "success": True,
+            "retry_successful_segments": 0,
+            "failed_segment_indices": [],
+            "message": "没有需要重试的片段"
+        }
+    
+    try:
+        # 加载参考音频结果
+        with open(reference_results_path, "r", encoding="utf-8") as f:
+            reference_data = json.load(f)
+        
+        reference_segments = reference_data.get("reference_audio_segments", [])
+        if not reference_segments:
+            return {
+                "success": False,
+                "error": "参考音频片段为空",
+                "retry_successful_segments": 0,
+                "failed_segment_indices": failed_indices
+            }
+        
+        # 初始化TTS处理器
+        tts_processor = TTSProcessor()
+        
+        # 筛选出需要重试的片段
+        segments_to_retry = [
+            seg for seg in reference_segments 
+            if seg.get("index") in failed_indices
+        ]
+        
+        logger.info(f"准备重试 {len(segments_to_retry)} 个失败片段: {failed_indices}")
+        
+        # 重试处理
+        successful_count = 0
+        still_failed_indices = []
+        output_dir = Path(output_dir)
+        
+        for segment in segments_to_retry:
+            try:
+                # 生成单个TTS片段
+                tts_result = tts_processor._generate_single_tts(segment, output_dir)
+                
+                if tts_result:
+                    successful_count += 1
+                    logger.debug(f"重试成功: 片段 {segment['index']}")
+                else:
+                    still_failed_indices.append(segment['index'])
+                    logger.warning(f"重试失败: 片段 {segment['index']}")
+                    
+            except Exception as e:
+                still_failed_indices.append(segment['index'])
+                logger.error(f"重试片段 {segment['index']} 时出错: {str(e)}")
+        
+        # 构建重试结果
+        is_all_successful = len(still_failed_indices) == 0
+        
+        logger.info(
+            f"重试完成: {successful_count}/{len(segments_to_retry)} 成功, "
+            f"剩余失败: {still_failed_indices}"
+        )
+        
+        return {
+            "success": is_all_successful,
+            "retry_successful_segments": successful_count,
+            "failed_segment_indices": still_failed_indices,
+            "message": f"重试 {successful_count}/{len(segments_to_retry)} 个片段成功"
+        }
+        
+    except Exception as e:
+        logger.error(f"重试失败片段时发生异常: {str(e)}", exc_info=True)
+        return {
+            "success": False,
+            "error": str(e),
+            "retry_successful_segments": 0,
+            "failed_segment_indices": failed_indices
+        }
 
 
 class GenerateTTSProcessor(StepProcessor):

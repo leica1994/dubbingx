@@ -101,13 +101,14 @@ class TTSProcessor:
         self.logger.info(f"开始TTS语音生成: {reference_results_path}")
         self.logger.info(f"找到 {len(reference_segments)} 个参考音频片段")
 
-        tts_segments, successful_segments = self._generate_all_segments(
+        tts_segments, successful_segments, failed_indices = self._generate_all_segments(
             reference_segments, output_dir
         )
 
         results = self._build_generation_results(
             tts_segments,
             successful_segments,
+            failed_indices,
             reference_segments,
             output_dir,
             reference_results_path,
@@ -124,6 +125,7 @@ class TTSProcessor:
         """生成所有TTS片段"""
         tts_segments = []
         successful_segments = 0
+        failed_indices = []
 
         for segment in reference_segments:
             try:
@@ -133,20 +135,23 @@ class TTSProcessor:
                     successful_segments += 1
                     self.logger.debug(f"TTS生成成功: 片段 {segment['index']}")
                 else:
+                    failed_indices.append(segment['index'])
                     self.logger.warning(f"TTS生成失败: 片段 {segment['index']}")
             except Exception as e:
+                failed_indices.append(segment['index'])
                 self.logger.error(f"处理片段 {segment['index']} 时出错: {str(e)}")
                 continue
 
         self.logger.info(
             f"TTS生成完成: {successful_segments}/{len(reference_segments)} 个片段成功"
         )
-        return tts_segments, successful_segments
+        return tts_segments, successful_segments, failed_indices
 
     def _build_generation_results(
         self,
         tts_segments: list,
         successful_segments: int,
+        failed_indices: list,
         reference_segments: list,
         output_dir: Path,
         reference_results_path: str,
@@ -163,6 +168,7 @@ class TTSProcessor:
             "total_segments": len(reference_segments),
             "successful_segments": successful_segments,
             "failed_segments": len(reference_segments) - successful_segments,
+            "failed_segment_indices": failed_indices,
             "total_requested": len(reference_segments),
             "reference_file": reference_results_path,
             "generation_info": {
