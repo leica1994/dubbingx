@@ -55,10 +55,10 @@ class TaskScheduler:
             1: 1,   # separate_media - GPU任务，避免并发竞争（保持1）
             2: 6,   # generate_reference_audio - 内存密集型，利用48GB内存（2->6）
             3: 6,   # generate_tts - 外部服务调用，I/O密集型（4->6）
-            4: 3,   # align_audio - GPU+内存任务，适度增加（2->3）
+            4: 1,   # align_audio - GPU+内存任务，改为单线程避免GPU竞争（3->1）
             5: 4,   # generate_aligned_srt - 内存密集型，利用大内存（2->4）
-            6: 3,   # process_video_speed - GPU+内存任务，适度增加（2->3）
-            7: 2,   # merge_audio_video - GPU密集型，保持稳定（保持2）
+            6: 1,   # process_video_speed - GPU+内存任务，改为单线程避免GPU竞争（3->1）
+            7: 1,   # merge_audio_video - GPU密集型，改为单线程避免GPU竞争（2->1）
         }
 
         # 队列管理器
